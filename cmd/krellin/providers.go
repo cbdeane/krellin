@@ -38,7 +38,7 @@ func (p providersCmd) Run(args []string) error {
 	case "add":
 		fs := flag.NewFlagSet("providers add", flag.ContinueOnError)
 		name := fs.String("name", "", "provider name")
-		ptype := fs.String("type", "", "openai|anthropic|grok|llama")
+		ptype := fs.String("type", "", "openai|anthropic|grok|gemini|llama")
 		model := fs.String("model", "", "model name")
 		baseURL := fs.String("base-url", "", "base url (optional)")
 		keyEnv := fs.String("api-key-env", "", "env var for api key")
@@ -50,7 +50,7 @@ func (p providersCmd) Run(args []string) error {
 			return errors.New("name, type, model, and api-key-env are required")
 		}
 		pt := agents.ProviderType(strings.ToLower(*ptype))
-		if pt != agents.ProviderOpenAI && pt != agents.ProviderAnthropic && pt != agents.ProviderGrok && pt != agents.ProviderLLaMA {
+		if pt != agents.ProviderOpenAI && pt != agents.ProviderAnthropic && pt != agents.ProviderGrok && pt != agents.ProviderGemini && pt != agents.ProviderLLaMA {
 			return errors.New("invalid provider type")
 		}
 		prov := agents.Provider{

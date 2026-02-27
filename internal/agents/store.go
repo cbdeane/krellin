@@ -13,17 +13,18 @@ const (
 	ProviderOpenAI    ProviderType = "openai"
 	ProviderAnthropic ProviderType = "anthropic"
 	ProviderGrok      ProviderType = "grok"
+	ProviderGemini    ProviderType = "gemini"
 	ProviderLLaMA     ProviderType = "llama"
 )
 
 type Provider struct {
-	Name       string       `json:"name"`
-	Type       ProviderType `json:"type"`
-	BaseURL    string       `json:"base_url,omitempty"`
-	Model      string       `json:"model"`
-	APIKeyEnv  string       `json:"api_key_env"`
-	Enabled    bool         `json:"enabled"`
-	Notes      string       `json:"notes,omitempty"`
+	Name      string       `json:"name"`
+	Type      ProviderType `json:"type"`
+	BaseURL   string       `json:"base_url,omitempty"`
+	Model     string       `json:"model"`
+	APIKeyEnv string       `json:"api_key_env"`
+	Enabled   bool         `json:"enabled"`
+	Notes     string       `json:"notes,omitempty"`
 }
 
 type Store struct {
