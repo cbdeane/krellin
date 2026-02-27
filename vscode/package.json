@@ -1,0 +1,54 @@
+{
+  "name": "krellin",
+  "displayName": "Krellin",
+  "description": "Krellin VS Code client (v0)",
+  "version": "0.0.1",
+  "publisher": "krellin",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["*"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "krellin",
+          "title": "Krellin",
+          "icon": "resources/krellin.svg"
+        }
+      ]
+    },
+    "views": {
+      "krellin": [
+        {
+          "id": "krellin.chat",
+          "name": "Chat"
+        },
+        {
+          "id": "krellin.terminal",
+          "name": "Terminal"
+        },
+        {
+          "id": "krellin.diff",
+          "name": "Diff"
+        },
+        {
+          "id": "krellin.timeline",
+          "name": "Timeline"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "krellin.start",
+        "title": "Krellin: Start"
+      },
+      {
+        "command": "krellin.runCommand",
+        "title": "Krellin: Run Command"
+      }
+    ]
+  }
+}
