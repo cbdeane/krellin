@@ -158,6 +158,18 @@ func (s *Session) Start(ctx context.Context) {
 				MemoryMB:    s.memoryMB,
 			})
 			if err != nil {
+				banner, _ := protocol.MarshalPayload(protocol.TerminalOutputPayload{
+					Stream: "stdout",
+					Data:   "Krellin failed to start capsule. Check image availability and Docker status.\n",
+				})
+				s.Emit(protocol.Event{
+					EventID:   "capsule-ensure-banner",
+					SessionID: s.id,
+					Timestamp: time.Now().UTC(),
+					Type:      protocol.EventTerminalOutput,
+					Source:    protocol.SourceExecutor,
+					Payload:   banner,
+				})
 				payload, _ := protocol.MarshalPayload(protocol.ErrorPayload{Message: err.Error()})
 				ev := protocol.Event{
 					EventID:   "capsule-ensure-error",

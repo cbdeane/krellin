@@ -23,7 +23,7 @@ func (r *recordCapsule) Ensure(ctx context.Context, cfg capsule.Config) (capsule
 	return capsule.Handle{ID: "krellin-repo1"}, nil
 }
 func (r *recordCapsule) Start(ctx context.Context, handle capsule.Handle) error { return nil }
-func (r *recordCapsule) Stop(ctx context.Context, handle capsule.Handle) error { return nil }
+func (r *recordCapsule) Stop(ctx context.Context, handle capsule.Handle) error  { return nil }
 func (r *recordCapsule) Reset(ctx context.Context, handle capsule.Handle, imageDigest string, preserveVolumes bool) error {
 	r.lastReset = &preserveVolumes
 	return nil
@@ -33,6 +33,9 @@ func (r *recordCapsule) AttachPTY(ctx context.Context, handle capsule.Handle) (c
 		r.ptyConn = &recordPTYConn{}
 	}
 	return r.ptyConn, nil
+}
+func (r *recordCapsule) Exec(ctx context.Context, handle capsule.Handle, command string, opts capsule.ExecOptions) (capsule.ExecResult, error) {
+	return capsule.ExecResult{}, nil
 }
 func (r *recordCapsule) Commit(ctx context.Context, handle capsule.Handle, opts capsule.CommitOptions) (string, error) {
 	r.lastFreeze = opts.Mode
@@ -60,8 +63,11 @@ func (r *recordPTYConn) Read(p []byte) (int, error) {
 	copy(p, []byte(next))
 	return len(next), nil
 }
-func (r *recordPTYConn) Write(p []byte) (int, error) { r.writes = append(r.writes, string(p)); return len(p), nil }
-func (r *recordPTYConn) Close() error                { return nil }
+func (r *recordPTYConn) Write(p []byte) (int, error) {
+	r.writes = append(r.writes, string(p))
+	return len(p), nil
+}
+func (r *recordPTYConn) Close() error { return nil }
 
 func TestSessionHandlerNetworkToggle(t *testing.T) {
 	caps := &recordCapsule{}

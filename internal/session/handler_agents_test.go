@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"krellin/internal/agents"
+	"krellin/internal/capsule"
 	"krellin/internal/protocol"
 )
 
@@ -33,7 +34,7 @@ func TestSessionHandlerAgentsList(t *testing.T) {
 	s.agentsSecrets = &fakeSecrets{keys: map[string]string{"p1": "k"}}
 	h := SessionHandler{Session: s}
 
-	ch := s.Subscribe(1)
+	ch := s.Subscribe(2)
 	defer s.Unsubscribe(ch)
 
 	action := protocol.Action{
@@ -212,7 +213,7 @@ func TestSessionHandlerPromptEmitsAgentMessage(t *testing.T) {
 	})
 	h := SessionHandler{Session: s}
 
-	ch := s.Subscribe(1)
+	ch := s.Subscribe(4)
 	defer s.Unsubscribe(ch)
 
 	payload, _ := json.Marshal(protocol.AgentPromptPayload{Content: "hello"})
@@ -262,6 +263,59 @@ func TestSessionHandlerPromptUsesActiveProvider(t *testing.T) {
 	}
 	if runner.lastProvider != "p2" {
 		t.Fatalf("expected p2 runner, got %q", runner.lastProvider)
+	}
+}
+
+func TestSessionHandlerPromptToolLoopExecutesInCapsule(t *testing.T) {
+	caps := &toolCapsule{output: "ok\n"}
+	s := newBareSession(t, caps, nil)
+	s.agentsStore = agents.NewStore(t.TempDir() + "/providers.json")
+	s.agentsSelection = agents.NewSelectionStore(t.TempDir() + "/agents.json")
+	s.agentsRunner = &sequenceRunner{responses: []string{
+		`{"tool_calls":[{"tool":"shell","args":{"command":"ls","cwd":"/workspace"}}]}`,
+		`{"final":"done"}`,
+	}}
+	_ = s.agentsStore.Save([]agents.Provider{
+		{Name: "p1", Type: agents.ProviderOpenAI, Model: "gpt", APIKeyEnv: "OPENAI_API_KEY", Enabled: true},
+	})
+	h := SessionHandler{Session: s}
+
+	ch := s.Subscribe(8)
+	defer s.Unsubscribe(ch)
+
+	payload, _ := json.Marshal(protocol.AgentPromptPayload{Content: "list files"})
+	action := protocol.Action{
+		ActionID:  "a1",
+		SessionID: "s1",
+		AgentID:   "agent",
+		Type:      protocol.ActionAgentPrompt,
+		Timestamp: time.Now(),
+		Payload:   payload,
+	}
+	if err := h.Handle(context.Background(), action); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	if caps.lastCommand != "ls" {
+		t.Fatalf("expected exec command ls, got %q", caps.lastCommand)
+	}
+	var msg protocol.AgentMessagePayload
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case ev := <-ch:
+			if ev.Type != protocol.EventAgentMessage {
+				continue
+			}
+			if err := json.Unmarshal(ev.Payload, &msg); err != nil {
+				t.Fatalf("unmarshal payload: %v", err)
+			}
+			if msg.Content != "done" {
+				t.Fatalf("expected final response, got %q", msg.Content)
+			}
+			return
+		case <-deadline:
+			t.Fatalf("timed out waiting for agent message")
+		}
 	}
 }
 
@@ -326,6 +380,49 @@ type fakeRunner struct {
 func (f *fakeRunner) Prompt(ctx context.Context, provider agents.Provider, prompt string) (string, error) {
 	f.lastProvider = provider.Name
 	return f.response, nil
+}
+
+type sequenceRunner struct {
+	responses []string
+}
+
+func (s *sequenceRunner) Prompt(ctx context.Context, provider agents.Provider, prompt string) (string, error) {
+	if len(s.responses) == 0 {
+		return "", nil
+	}
+	out := s.responses[0]
+	s.responses = s.responses[1:]
+	return out, nil
+}
+
+type toolCapsule struct {
+	lastCommand string
+	output      string
+}
+
+func (t *toolCapsule) Ensure(ctx context.Context, cfg capsule.Config) (capsule.Handle, error) {
+	return capsule.Handle{ID: "krellin-repo1", RepoRoot: "/workspace"}, nil
+}
+func (t *toolCapsule) Start(ctx context.Context, handle capsule.Handle) error { return nil }
+func (t *toolCapsule) Stop(ctx context.Context, handle capsule.Handle) error  { return nil }
+func (t *toolCapsule) Reset(ctx context.Context, handle capsule.Handle, imageDigest string, preserveVolumes bool) error {
+	return nil
+}
+func (t *toolCapsule) AttachPTY(ctx context.Context, handle capsule.Handle) (capsule.PTYConn, error) {
+	return nil, nil
+}
+func (t *toolCapsule) Exec(ctx context.Context, handle capsule.Handle, command string, opts capsule.ExecOptions) (capsule.ExecResult, error) {
+	t.lastCommand = command
+	return capsule.ExecResult{Output: t.output, ExitCode: 0}, nil
+}
+func (t *toolCapsule) Commit(ctx context.Context, handle capsule.Handle, opts capsule.CommitOptions) (string, error) {
+	return "", nil
+}
+func (t *toolCapsule) SetNetwork(ctx context.Context, handle capsule.Handle, enabled bool) error {
+	return nil
+}
+func (t *toolCapsule) Status(ctx context.Context, handle capsule.Handle) (capsule.Status, error) {
+	return capsule.Status{}, nil
 }
 
 type fakeSecrets struct {

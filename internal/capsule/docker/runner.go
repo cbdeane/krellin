@@ -15,7 +15,7 @@ func (r ExecRunner) Run(ctx context.Context, args ...string) (string, error) {
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 	if err := cmd.Run(); err != nil {
-		return "", err
+		return out.String(), err
 	}
 	return out.String(), nil
 }

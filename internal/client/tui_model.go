@@ -33,6 +33,8 @@ type localCmdResultMsg struct {
 	err    error
 }
 
+type thinkTickMsg struct{}
+
 type tuiModel struct {
 	client    client.Client
 	sessionID string
@@ -71,6 +73,10 @@ type tuiModel struct {
 
 	agentsDeletePending bool
 	agentsDeleteName    string
+
+	thinking     bool
+	pendingAgent bool
+	thinkFrame   int
 }
 
 func newTUIModel(c client.Client, sessionID, agentID string) *tuiModel {
@@ -285,6 +291,12 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.ready {
 				m.ready = true
 			}
+			if isAgentPrompt(line) {
+				m.appendTerminalLine("[you] " + line)
+				m.thinking = true
+				m.pendingAgent = true
+				return m, tea.Batch(m.dispatchInputCmd(line), thinkTickCmd())
+			}
 			return m, m.dispatchInputCmd(line)
 		}
 	case eventMsg:
@@ -313,6 +325,13 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case disconnectedMsg:
 		m.ready = false
 		m.appendTerminal("[disconnected] retrying...")
+		return m, nil
+	case thinkTickMsg:
+		if m.thinking {
+			m.thinkFrame = (m.thinkFrame + 1) % len(thinkFrames)
+			m.updateOutput()
+			return m, thinkTickCmd()
+		}
 		return m, nil
 	case tea.PasteMsg:
 		if m.agentsOpen && m.agentsMode == "add" {
@@ -385,6 +404,10 @@ func (m *tuiModel) sendActionCmd(line string) tea.Cmd {
 		}
 		return nil
 	}
+}
+
+func isAgentPrompt(line string) bool {
+	return !strings.HasPrefix(line, "/") && !strings.HasPrefix(line, "!")
 }
 
 func (m *tuiModel) dispatchInputCmd(line string) tea.Cmd {
@@ -531,6 +554,10 @@ func (m *tuiModel) applyEvent(ev protocol.Event) {
 		if err := json.Unmarshal(ev.Payload, &payload); err == nil {
 			m.appendTerminal("[error] " + payload.Message)
 		}
+		if m.pendingAgent {
+			m.thinking = false
+			m.pendingAgent = false
+		}
 	case protocol.EventActionStarted:
 		var payload protocol.ActionStartedPayload
 		if err := json.Unmarshal(ev.Payload, &payload); err == nil {
@@ -544,10 +571,18 @@ func (m *tuiModel) applyEvent(ev protocol.Event) {
 				m.appendTerminal("[error] action failed: " + payload.Error)
 			}
 		}
+		if m.pendingAgent {
+			m.thinking = false
+			m.pendingAgent = false
+		}
 	case protocol.EventAgentMessage:
 		var payload protocol.AgentMessagePayload
 		if err := json.Unmarshal(ev.Payload, &payload); err == nil {
-			m.appendTerminal("[agent] " + payload.Content)
+			m.appendTerminalLine("[agent] " + payload.Content)
+		}
+		if m.pendingAgent {
+			m.thinking = false
+			m.pendingAgent = false
 		}
 	case protocol.EventAgentsList:
 		var payload protocol.AgentsListPayload
@@ -572,6 +607,10 @@ func (m *tuiModel) appendTerminal(data string) {
 	if data == "" {
 		return
 	}
+	trimmed := strings.TrimLeft(data, "\n")
+	if strings.HasPrefix(trimmed, "[tool ") && len(m.terminal) > 0 && m.terminal[len(m.terminal)-1] != "" {
+		data = "\n" + data
+	}
 	parts := strings.Split(data, "\n")
 	if len(m.terminal) == 0 {
 		m.terminal = append(m.terminal, parts[0])
@@ -581,6 +620,15 @@ func (m *tuiModel) appendTerminal(data string) {
 	for _, part := range parts[1:] {
 		m.terminal = append(m.terminal, part)
 	}
+	m.terminal = clampLines(m.terminal, 1000)
+	m.updateOutput()
+}
+
+func (m *tuiModel) appendTerminalLine(line string) {
+	if line == "" {
+		return
+	}
+	m.terminal = append(m.terminal, line)
 	m.terminal = clampLines(m.terminal, 1000)
 	m.updateOutput()
 }
@@ -630,7 +678,8 @@ func (m *tuiModel) updateOutput() {
 		return
 	}
 	m.outputVP.SetContent(strings.Join(m.terminal, "\n"))
-	m.inputVP.SetContent(m.input.View())
+	m.outputVP.GotoBottom()
+	m.inputVP.SetContent(m.input.View() + "\n" + m.thinkingLine())
 }
 
 func (m *tuiModel) renderOutput(width, height int) string {
@@ -652,6 +701,7 @@ func (m *tuiModel) renderOutput(width, height int) string {
 		m.outputVP.SetContent(strings.Join(logoLines(), "\n"))
 	} else {
 		m.outputVP.SetContent(strings.Join(m.terminal, "\n"))
+		m.outputVP.GotoBottom()
 	}
 	return m.outputVP.View()
 }
@@ -671,8 +721,24 @@ func (m *tuiModel) renderInput(width, height int) string {
 	m.inputVP.Style = style
 	m.inputVP.SetWidth(width)
 	m.inputVP.SetHeight(height)
-	m.inputVP.SetContent(m.input.View())
+	m.inputVP.SetContent(m.input.View() + "\n" + m.thinkingLine())
 	return m.inputVP.View()
+}
+
+var thinkFrames = []string{"⟡", "⟢", "⟣", "⟤", "⟥", "⟤", "⟣", "⟢"}
+
+func thinkTickCmd() tea.Cmd {
+	return tea.Tick(180*time.Millisecond, func(time.Time) tea.Msg {
+		return thinkTickMsg{}
+	})
+}
+
+func (m *tuiModel) thinkingLine() string {
+	if !m.thinking {
+		return ""
+	}
+	frame := thinkFrames[m.thinkFrame%len(thinkFrames)]
+	return fmt.Sprintf("λ agent %s waiting for response…", frame)
 }
 
 func (m *tuiModel) renderAgentsModal(width, height int) string {

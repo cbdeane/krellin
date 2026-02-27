@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -13,17 +14,30 @@ type call struct {
 }
 
 type fakeRunner struct {
-	calls []call
+	calls   []call
 	outputs map[string]string
+	errors  map[string]error
 }
 
 func (f *fakeRunner) Run(ctx context.Context, args ...string) (string, error) {
 	f.calls = append(f.calls, call{args: args})
 	if f.outputs == nil {
-		return "", nil
+		if f.errors == nil {
+			return "", nil
+		}
 	}
 	key := joinArgs(args)
-	return f.outputs[key], nil
+	out := ""
+	if f.outputs != nil {
+		out = f.outputs[key]
+	}
+	if f.errors != nil {
+		if err, ok := f.errors[key]; ok {
+			delete(f.errors, key)
+			return out, err
+		}
+	}
+	return out, nil
 }
 
 func joinArgs(args []string) string {
@@ -68,6 +82,7 @@ func TestEnsureUsesExistingContainer(t *testing.T) {
 	fr := &fakeRunner{
 		outputs: map[string]string{
 			"docker ps -a --filter name=krellin-repo1 --format {{.ID}}": "abc123",
+			"docker inspect -f {{.State.Running}} krellin-repo1":        "true",
 		},
 	}
 	c := New(fr)
@@ -76,8 +91,68 @@ func TestEnsureUsesExistingContainer(t *testing.T) {
 		t.Fatalf("ensure: %v", err)
 	}
 
-	if len(fr.calls) != 1 {
-		t.Fatalf("expected 1 call, got %d", len(fr.calls))
+	if len(fr.calls) != 2 {
+		t.Fatalf("expected 2 calls, got %d", len(fr.calls))
+	}
+}
+
+func TestEnsureStartsWhenStopped(t *testing.T) {
+	fr := &fakeRunner{
+		outputs: map[string]string{
+			"docker ps -a --filter name=krellin-repo1 --format {{.ID}}": "abc123",
+			"docker inspect -f {{.State.Running}} krellin-repo1":        "false",
+		},
+	}
+	c := New(fr)
+	_, err := c.Ensure(context.Background(), capsule.Config{RepoID: "repo1", RepoRoot: "/repo", ImageDigest: "img@sha256:abc"})
+	if err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+
+	foundStart := false
+	for _, call := range fr.calls {
+		if len(call.args) >= 2 && call.args[0] == "docker" && call.args[1] == "start" {
+			foundStart = true
+			break
+		}
+	}
+	if !foundStart {
+		t.Fatalf("expected docker start when container stopped")
+	}
+}
+
+func TestEnsurePullsOnCreateFailure(t *testing.T) {
+	cfg := capsule.Config{
+		RepoID:      "repo1",
+		RepoRoot:    "/repo",
+		ImageDigest: "img@sha256:abc",
+		NetworkOn:   true,
+	}
+	createArgs := joinArgs(buildCreateArgs(cfg, "krellin-repo1"))
+	fr := &fakeRunner{
+		outputs: map[string]string{
+			"docker ps -a --filter name=krellin-repo1 --format {{.ID}}": "",
+			"docker pull img@sha256:abc":                                "pulled",
+		},
+		errors: map[string]error{
+			createArgs: errors.New("no such image"),
+		},
+	}
+	c := New(fr)
+	_, err := c.Ensure(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+
+	foundPull := false
+	for _, call := range fr.calls {
+		if len(call.args) >= 2 && call.args[0] == "docker" && call.args[1] == "pull" {
+			foundPull = true
+			break
+		}
+	}
+	if !foundPull {
+		t.Fatalf("expected docker pull on create failure")
 	}
 }
 

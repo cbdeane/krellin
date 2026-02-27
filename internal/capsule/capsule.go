@@ -34,12 +34,23 @@ type PTYConn interface {
 	Close() error
 }
 
+type ExecOptions struct {
+	Cwd string
+	Env map[string]string
+}
+
+type ExecResult struct {
+	Output   string
+	ExitCode int
+}
+
 type Capsule interface {
 	Ensure(ctx context.Context, cfg Config) (Handle, error)
 	Start(ctx context.Context, handle Handle) error
 	Stop(ctx context.Context, handle Handle) error
 	Reset(ctx context.Context, handle Handle, imageDigest string, preserveVolumes bool) error
 	AttachPTY(ctx context.Context, handle Handle) (PTYConn, error)
+	Exec(ctx context.Context, handle Handle, command string, opts ExecOptions) (ExecResult, error)
 	Commit(ctx context.Context, handle Handle, opts CommitOptions) (string, error)
 	SetNetwork(ctx context.Context, handle Handle, enabled bool) error
 	Status(ctx context.Context, handle Handle) (Status, error)

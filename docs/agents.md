@@ -34,3 +34,7 @@ krellin providers add --name myllama --type llama --model llama3 --api-key-env L
 
 - API keys are read from environment variables to avoid storing secrets on disk.
 - Base URLs are optional for hosted providers and required for self-hosted LLaMA.
+
+## Agent Tooling (v0)
+
+Agent prompts can trigger tool calls that execute **inside the capsule**. Tools are shell- and file-oriented (read/write/list/search/apply_patch) and are restricted to `/workspace`. Tool execution is serialized with the session executor, results are fed back to the agent loop, and tool output is streamed to the terminal panel.

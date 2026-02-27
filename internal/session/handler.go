@@ -362,14 +362,7 @@ func (h SessionHandler) handleAgentPrompt(ctx context.Context, action protocol.A
 			provider.APIKey = key
 		}
 	}
-	resp, err := h.Session.agentsRunner.Prompt(ctx, provider, content)
-	if err != nil {
-		return h.emitAgentMessage(action, fmt.Sprintf("Agent error: %v", err))
-	}
-	if strings.TrimSpace(resp) == "" {
-		return h.emitAgentMessage(action, "Agent returned empty response.")
-	}
-	return h.emitAgentMessage(action, resp)
+	return h.runAgentWithTools(ctx, action, provider, content)
 }
 
 func (h SessionHandler) emitAgentMessage(action protocol.Action, content string) error {

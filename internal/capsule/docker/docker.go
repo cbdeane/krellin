@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os/exec"
 	"strings"
 
 	"krellin/internal/capsule"
@@ -37,11 +38,25 @@ func (c *Capsule) Ensure(ctx context.Context, cfg capsule.Config) (capsule.Handl
 		return capsule.Handle{}, err
 	}
 	if strings.TrimSpace(existing) != "" {
+		runningOut, err := c.runner.Run(ctx, "docker", "inspect", "-f", "{{.State.Running}}", name)
+		if err != nil {
+			return capsule.Handle{}, err
+		}
+		if strings.TrimSpace(runningOut) != "true" {
+			if _, err := c.runner.Run(ctx, "docker", "start", name); err != nil {
+				return capsule.Handle{}, err
+			}
+		}
 		return capsule.Handle{ID: name, RepoID: cfg.RepoID, RepoRoot: cfg.RepoRoot}, nil
 	}
 
 	if _, err := c.runner.Run(ctx, buildCreateArgs(cfg, name)...); err != nil {
-		return capsule.Handle{}, err
+		if pullErr := c.pullImage(ctx, cfg.ImageDigest); pullErr != nil {
+			return capsule.Handle{}, fmt.Errorf("create failed: %w (pull failed: %v)", err, pullErr)
+		}
+		if _, retryErr := c.runner.Run(ctx, buildCreateArgs(cfg, name)...); retryErr != nil {
+			return capsule.Handle{}, retryErr
+		}
 	}
 	if _, err := c.runner.Run(ctx, "docker", "start", name); err != nil {
 		return capsule.Handle{}, err
@@ -70,8 +85,15 @@ func (c *Capsule) Reset(ctx context.Context, handle capsule.Handle, imageDigest 
 		repoID = strings.TrimPrefix(handle.ID, "krellin-")
 	}
 	cfg := capsule.Config{RepoID: repoID, RepoRoot: handle.RepoRoot, ImageDigest: imageDigest}
-	_, err := c.runner.Run(ctx, buildCreateArgs(cfg, handle.ID)...)
-	return err
+	if _, err := c.runner.Run(ctx, buildCreateArgs(cfg, handle.ID)...); err != nil {
+		if pullErr := c.pullImage(ctx, cfg.ImageDigest); pullErr != nil {
+			return fmt.Errorf("create failed: %w (pull failed: %v)", err, pullErr)
+		}
+		if _, retryErr := c.runner.Run(ctx, buildCreateArgs(cfg, handle.ID)...); retryErr != nil {
+			return retryErr
+		}
+	}
+	return nil
 }
 
 func (c *Capsule) AttachPTY(ctx context.Context, handle capsule.Handle) (capsule.PTYConn, error) {
@@ -79,6 +101,29 @@ func (c *Capsule) AttachPTY(ctx context.Context, handle capsule.Handle) (capsule
 		return nil, fmt.Errorf("pty factory not configured")
 	}
 	return c.ptyFactory.Exec(ctx, handle.ID)
+}
+
+func (c *Capsule) Exec(ctx context.Context, handle capsule.Handle, command string, opts capsule.ExecOptions) (capsule.ExecResult, error) {
+	if strings.TrimSpace(command) == "" {
+		return capsule.ExecResult{}, fmt.Errorf("command required")
+	}
+	args := []string{"docker", "exec", "-i"}
+	if opts.Cwd != "" {
+		args = append(args, "-w", opts.Cwd)
+	}
+	for key, val := range opts.Env {
+		args = append(args, "-e", fmt.Sprintf("%s=%s", key, val))
+	}
+	args = append(args, handle.ID, "sh", "-lc", command)
+	out, err := c.runner.Run(ctx, args...)
+	if err != nil {
+		exitCode := 1
+		if ee, ok := err.(*exec.ExitError); ok {
+			exitCode = ee.ExitCode()
+		}
+		return capsule.ExecResult{Output: out, ExitCode: exitCode}, err
+	}
+	return capsule.ExecResult{Output: out, ExitCode: 0}, nil
 }
 
 func (c *Capsule) Commit(ctx context.Context, handle capsule.Handle, opts capsule.CommitOptions) (string, error) {
@@ -122,6 +167,14 @@ func (c *Capsule) Status(ctx context.Context, handle capsule.Handle) (capsule.St
 		Image:   parts[1],
 		Labels:  labels,
 	}, nil
+}
+
+func (c *Capsule) pullImage(ctx context.Context, image string) error {
+	if strings.TrimSpace(image) == "" {
+		return fmt.Errorf("image required")
+	}
+	_, err := c.runner.Run(ctx, "docker", "pull", image)
+	return err
 }
 
 func containerName(repoID string) string {

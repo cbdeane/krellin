@@ -18,18 +18,25 @@ func (f *fakeCapsule) Ensure(ctx context.Context, cfg capsule.Config) (capsule.H
 }
 
 func (f *fakeCapsule) Start(ctx context.Context, handle capsule.Handle) error { return nil }
-func (f *fakeCapsule) Stop(ctx context.Context, handle capsule.Handle) error { return nil }
+func (f *fakeCapsule) Stop(ctx context.Context, handle capsule.Handle) error  { return nil }
 func (f *fakeCapsule) Reset(ctx context.Context, handle capsule.Handle, imageDigest string, preserveVolumes bool) error {
 	return nil
 }
 func (f *fakeCapsule) AttachPTY(ctx context.Context, handle capsule.Handle) (capsule.PTYConn, error) {
 	return nil, nil
 }
+func (f *fakeCapsule) Exec(ctx context.Context, handle capsule.Handle, command string, opts capsule.ExecOptions) (capsule.ExecResult, error) {
+	return capsule.ExecResult{}, nil
+}
 func (f *fakeCapsule) Commit(ctx context.Context, handle capsule.Handle, opts capsule.CommitOptions) (string, error) {
 	return "", nil
 }
-func (f *fakeCapsule) SetNetwork(ctx context.Context, handle capsule.Handle, enabled bool) error { return nil }
-func (f *fakeCapsule) Status(ctx context.Context, handle capsule.Handle) (capsule.Status, error) { return capsule.Status{}, nil }
+func (f *fakeCapsule) SetNetwork(ctx context.Context, handle capsule.Handle, enabled bool) error {
+	return nil
+}
+func (f *fakeCapsule) Status(ctx context.Context, handle capsule.Handle) (capsule.Status, error) {
+	return capsule.Status{}, nil
+}
 
 func TestCapsuleManagerValidatesMounts(t *testing.T) {
 	caps := &fakeCapsule{}
