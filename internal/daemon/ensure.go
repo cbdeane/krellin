@@ -15,6 +15,15 @@ func (d *Daemon) EnsureSessionForRepo(ctx context.Context, startPath string) (*s
 	if err != nil {
 		return nil, err
 	}
+	// Reuse existing session for the repo if present.
+	d.mu.Lock()
+	if id := d.byRepo[root]; id != "" {
+		if sess := d.sessions[id]; sess != nil {
+			d.mu.Unlock()
+			return sess, nil
+		}
+	}
+	d.mu.Unlock()
 	if d.factory != nil {
 		sess, err := d.factory(ctx, root)
 		if err != nil {
@@ -24,11 +33,12 @@ func (d *Daemon) EnsureSessionForRepo(ctx context.Context, startPath string) (*s
 			id := fmt.Sprintf("s-%d", atomic.AddUint64(&sessionCounter, 1))
 			sess.SetID(id)
 		}
-		sess.Start(ctx)
+		// Register before start so session.started has subscribers.
 		d.mu.Lock()
 		d.sessions[sess.ID()] = sess
 		d.byRepo[root] = sess.ID()
 		d.mu.Unlock()
+		sess.Start(ctx)
 		return sess, nil
 	}
 	return d.EnsureSession(ctx, root, fmt.Sprintf("krellin-%s", "default"), nil), nil

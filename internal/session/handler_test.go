@@ -153,7 +153,12 @@ func TestSessionHandlerFreeze(t *testing.T) {
 
 func TestSessionHandlerResetPreserve(t *testing.T) {
 	caps := &recordCapsule{}
-	s := &Session{capsule: caps, handle: capsule.Handle{ID: "krellin-repo1"}, subscribers: map[chan protocol.Event]struct{}{}}
+	s := &Session{
+		capsule:     caps,
+		handle:      capsule.Handle{ID: "krellin-repo1"},
+		subscribers: map[chan protocol.Event]struct{}{},
+	}
+	caps.ptyConn = &recordPTYConn{reads: []string{"ready"}}
 	ch := s.Subscribe(10)
 	h := SessionHandler{Session: s}
 	action := protocol.Action{
@@ -173,7 +178,7 @@ func TestSessionHandlerResetPreserve(t *testing.T) {
 	}
 	foundReset := false
 	foundBanner := false
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 3; i++ {
 		select {
 		case ev := <-ch:
 			if ev.Type == protocol.EventResetCompleted {

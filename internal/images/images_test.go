@@ -2,19 +2,28 @@ package images
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
 type fakeRunner struct {
-	out string
+	calls int
 }
 
-func (f fakeRunner) Run(ctx context.Context, args ...string) (string, error) {
-	return f.out, nil
+func (f *fakeRunner) Run(ctx context.Context, args ...string) (string, error) {
+	f.calls++
+	// First inspect fails, then pull succeeds, then inspect returns digest.
+	if f.calls == 1 && args[1] == "inspect" {
+		return "", errors.New("inspect failed")
+	}
+	if args[1] == "pull" {
+		return "pulled", nil
+	}
+	return "repo@sha256:abc", nil
 }
 
 func TestResolveDigest(t *testing.T) {
-	res := NewResolver(fakeRunner{out: "repo@sha256:abc"})
+	res := NewResolver(&fakeRunner{})
 	digest, err := res.ResolveDigest(context.Background(), "image:tag")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)

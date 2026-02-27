@@ -21,7 +21,14 @@ func NewResolver(runner Runner) *Resolver {
 func (r *Resolver) ResolveDigest(ctx context.Context, imageRef string) (string, error) {
 	out, err := r.runner.Run(ctx, "docker", "inspect", "-f", "{{index .RepoDigests 0}}", imageRef)
 	if err != nil {
-		return "", err
+		// Try pulling the image if inspect fails (likely missing locally).
+		if _, pullErr := r.runner.Run(ctx, "docker", "pull", imageRef); pullErr != nil {
+			return "", err
+		}
+		out, err = r.runner.Run(ctx, "docker", "inspect", "-f", "{{index .RepoDigests 0}}", imageRef)
+		if err != nil {
+			return "", err
+		}
 	}
 	res := strings.TrimSpace(out)
 	if res == "" {

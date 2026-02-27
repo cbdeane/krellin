@@ -120,6 +120,20 @@ func (h SessionHandler) Handle(ctx context.Context, action protocol.Action) erro
 		if _, err := s.pty.Write([]byte(cmd + "\n")); err != nil {
 			return err
 		}
+		// Echo command to terminal to improve visibility even if PTY output is delayed.
+		echo, _ := protocol.MarshalPayload(protocol.TerminalOutputPayload{
+			Stream: "stdout",
+			Data:   "> " + cmd + "\n",
+		})
+		s.Emit(protocol.Event{
+			EventID:   "command-echo",
+			SessionID: action.SessionID,
+			Timestamp: time.Now().UTC(),
+			Type:      protocol.EventTerminalOutput,
+			Source:    protocol.SourceExecutor,
+			AgentID:   action.AgentID,
+			Payload:   echo,
+		})
 		return nil
 	case protocol.ActionApplyPatch:
 		var payload protocol.ApplyPatchPayload
@@ -170,6 +184,19 @@ func (h SessionHandler) Handle(ctx context.Context, action protocol.Action) erro
 			Timestamp: time.Now().UTC(),
 			Type:      protocol.EventContainersList,
 			Source:    protocol.SourceExecutor,
+			AgentID:   action.AgentID,
+			Payload:   data,
+		})
+		return nil
+	case protocol.ActionAgentsList:
+		payload := protocol.AgentMessagePayload{Content: "No agents connected (LLM backend not configured)."}
+		data, _ := protocol.MarshalPayload(payload)
+		s.Emit(protocol.Event{
+			EventID:   "agent-message",
+			SessionID: action.SessionID,
+			Timestamp: time.Now().UTC(),
+			Type:      protocol.EventAgentMessage,
+			Source:    protocol.SourceSystem,
 			AgentID:   action.AgentID,
 			Payload:   data,
 		})

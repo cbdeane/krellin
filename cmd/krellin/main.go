@@ -24,6 +24,10 @@ func main() {
 	sockFlag := flag.String("sock", "/tmp/krellin.sock", "daemon unix socket")
 	flag.Parse()
 
+	if isProvidersCommand(flag.Args()) {
+		runProviders(flag.Args())
+	}
+
 	repo := *repoFlag
 	if repo == "" {
 		cwd, _ := os.Getwd()

@@ -45,6 +45,9 @@ type Session struct {
 	mu          sync.Mutex
 	startOnce   sync.Once
 	ptyOnce     sync.Once
+	started     bool
+	startedEvent *protocol.Event
+	lastErrorEvent *protocol.Event
 	capsule     capsule.Capsule
 	policy      policy.Policy
 	imageDigest string
@@ -78,13 +81,13 @@ func New(opts Options) *Session {
 		cpus:        opts.CPUs,
 		memoryMB:    opts.MemoryMB,
 		inventory:   opts.Inventory,
-	patches:     opts.Patches,
-	configPath:  opts.ConfigPath,
-	resolver:    opts.Resolver,
-	updater:     opts.Updater,
-	publisher:   opts.Publisher,
-	publishTo:   opts.PublishTo,
-	platforms:   opts.Platforms,
+		patches:     opts.Patches,
+		configPath:  opts.ConfigPath,
+		resolver:    opts.Resolver,
+		updater:     opts.Updater,
+		publisher:   opts.Publisher,
+		publishTo:   opts.PublishTo,
+		platforms:   opts.Platforms,
 	}
 	handler := opts.Handler
 	if handler == nil {
@@ -106,7 +109,7 @@ func (s *Session) Start(ctx context.Context) {
 	s.startOnce.Do(func() {
 		if s.capsule != nil {
 			manager := CapsuleManager{Capsule: s.capsule, Policy: s.policy}
-			handle, _ := manager.Ensure(ctx, capsule.Config{
+			handle, err := manager.Ensure(ctx, capsule.Config{
 				RepoID:      strings.TrimPrefix(s.capsuleName, "krellin-"),
 				RepoRoot:    s.repoRoot,
 				ImageDigest: s.imageDigest,
@@ -114,17 +117,38 @@ func (s *Session) Start(ctx context.Context) {
 				CPUs:        s.cpus,
 				MemoryMB:    s.memoryMB,
 			})
+			if err != nil {
+				payload, _ := protocol.MarshalPayload(protocol.ErrorPayload{Message: err.Error()})
+				ev := protocol.Event{
+					EventID:   "capsule-ensure-error",
+					SessionID: s.id,
+					Timestamp: time.Now().UTC(),
+					Type:      protocol.EventError,
+					Source:    protocol.SourceExecutor,
+					Payload:   payload,
+				}
+				s.mu.Lock()
+				s.lastErrorEvent = &ev
+				s.mu.Unlock()
+				s.Emit(ev)
+				return
+			}
 			s.handle = handle
 		}
 		payload, _ := protocol.MarshalPayload(protocol.SessionStartedPayload{RepoRoot: s.repoRoot, CapsuleName: s.capsuleName})
-		s.Emit(protocol.Event{
+		ev := protocol.Event{
 			EventID:   "session-started",
 			SessionID: s.id,
 			Timestamp: time.Now().UTC(),
 			Type:      protocol.EventSessionStarted,
 			Source:    protocol.SourceSystem,
 			Payload:   payload,
-		})
+		}
+		s.mu.Lock()
+		s.started = true
+		s.startedEvent = &ev
+		s.mu.Unlock()
+		s.Emit(ev)
 
 		go s.executor.Run(ctx)
 	})
@@ -141,7 +165,21 @@ func (s *Session) Subscribe(buffer int) chan protocol.Event {
 	ch := make(chan protocol.Event, buffer)
 	s.mu.Lock()
 	s.subscribers[ch] = struct{}{}
+	startedEvent := s.startedEvent
+	lastErrorEvent := s.lastErrorEvent
 	s.mu.Unlock()
+	if startedEvent != nil {
+		select {
+		case ch <- *startedEvent:
+		default:
+		}
+	}
+	if lastErrorEvent != nil {
+		select {
+		case ch <- *lastErrorEvent:
+		default:
+		}
+	}
 	return ch
 }
 
@@ -173,9 +211,30 @@ func (s *Session) ensurePTY(ctx context.Context) error {
 		var conn capsule.PTYConn
 		conn, err = s.capsule.AttachPTY(ctx, s.handle)
 		if err != nil {
+			payload, _ := protocol.MarshalPayload(protocol.ErrorPayload{Message: err.Error()})
+			s.Emit(protocol.Event{
+				EventID:   "pty-error",
+				SessionID: s.id,
+				Timestamp: time.Now().UTC(),
+				Type:      protocol.EventError,
+				Source:    protocol.SourceExecutor,
+				Payload:   payload,
+			})
 			return
 		}
 		s.pty = conn
+		banner, _ := protocol.MarshalPayload(protocol.TerminalOutputPayload{
+			Stream: "stdout",
+			Data:   "[pty attached]\n",
+		})
+		s.Emit(protocol.Event{
+			EventID:   "pty-attached",
+			SessionID: s.id,
+			Timestamp: time.Now().UTC(),
+			Type:      protocol.EventTerminalOutput,
+			Source:    protocol.SourceExecutor,
+			Payload:   banner,
+		})
 		go s.streamPTY(ctx, conn)
 	})
 	return err
@@ -208,6 +267,15 @@ func (s *Session) streamPTY(ctx context.Context, conn capsule.PTYConn) {
 			})
 		}
 		if err != nil {
+			payload, _ := protocol.MarshalPayload(protocol.ErrorPayload{Message: err.Error()})
+			s.Emit(protocol.Event{
+				EventID:   "terminal-read-error",
+				SessionID: s.id,
+				Timestamp: time.Now().UTC(),
+				Type:      protocol.EventError,
+				Source:    protocol.SourceExecutor,
+				Payload:   payload,
+			})
 			return
 		}
 		select {

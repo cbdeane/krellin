@@ -14,6 +14,7 @@ type CapsuleManager struct {
 }
 
 func (m CapsuleManager) Ensure(ctx context.Context, cfg capsule.Config) (capsule.Handle, error) {
+	// Only validate the repo root mount; HOME is set inside container, not mounted.
 	if err := policy.ValidateMount(m.Policy, cfg.RepoRoot); err != nil {
 		return capsule.Handle{}, err
 	}

@@ -18,6 +18,7 @@ const (
 	ActionNetworkToggle ActionType = "network_toggle"
 	ActionContainersList ActionType = "containers_list"
 	ActionRevert        ActionType = "revert"
+	ActionAgentsList    ActionType = "agents_list"
 )
 
 type Action struct {
@@ -156,6 +157,7 @@ var validActionTypes = map[ActionType]struct{}{
 	ActionNetworkToggle: {},
 	ActionContainersList: {},
 	ActionRevert:        {},
+	ActionAgentsList:    {},
 }
 
 var validEventTypes = map[EventType]struct{}{

@@ -14,6 +14,7 @@ Action types:
 - `network_toggle`
 - `containers_list`
 - `revert`
+- `agents_list`
 
 ## Events
 

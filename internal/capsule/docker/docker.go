@@ -132,6 +132,8 @@ func buildCreateArgs(cfg capsule.Config, name string) []string {
 	args := []string{"docker", "create", "--name", name}
 	args = append(args, "--cap-drop=ALL")
 	args = append(args, "--security-opt", "no-new-privileges")
+	args = append(args, "-w", "/workspace")
+	args = append(args, "-e", "HOME=/home/dev")
 	args = append(args, "--label", fmt.Sprintf("krellin.repo_id=%s", cfg.RepoID))
 	args = append(args, "--label", fmt.Sprintf("krellin.repo_root=%s", cfg.RepoRoot))
 	args = append(args, "--label", "krellin.kind=capsule")

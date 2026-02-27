@@ -28,7 +28,9 @@ func (c *SocketClient) SendAction(ctx context.Context, action []byte) error {
 	if err := daemon.WriteConnect(conn, c.sessionID, c.repoRoot); err != nil {
 		return err
 	}
-	_ = readConnectResponse(conn)
+	if sessionID, err := readConnectResponse(conn); err == nil && sessionID != "" && c.sessionID == "" {
+		c.sessionID = sessionID
+	}
 	_, err = conn.Write(append(action, '\n'))
 	return err
 }
@@ -41,7 +43,14 @@ func (c *SocketClient) Subscribe(ctx context.Context) (<-chan []byte, error) {
 	if err := daemon.WriteConnect(conn, c.sessionID, c.repoRoot); err != nil {
 		return nil, err
 	}
-	_ = readConnectResponse(conn)
+	sessionID, err := readConnectResponse(conn)
+	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	if sessionID != "" && c.sessionID == "" {
+		c.sessionID = sessionID
+	}
 	out := make(chan []byte, 16)
 	go func() {
 		defer conn.Close()
@@ -55,14 +64,14 @@ func (c *SocketClient) Subscribe(ctx context.Context) (<-chan []byte, error) {
 	return out, nil
 }
 
-func readConnectResponse(conn net.Conn) error {
+func readConnectResponse(conn net.Conn) (string, error) {
 	scanner := bufio.NewScanner(conn)
 	if !scanner.Scan() {
-		return scanner.Err()
+		return "", scanner.Err()
 	}
 	var resp daemon.ConnectResponse
 	if err := json.Unmarshal(scanner.Bytes(), &resp); err != nil {
-		return err
+		return "", err
 	}
-	return nil
+	return resp.SessionID, nil
 }

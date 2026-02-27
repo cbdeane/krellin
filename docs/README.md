@@ -14,3 +14,4 @@
 - `reviews.md` — review/audit log
 - `errors.md` — error events
 - `testing.md` — test strategy
+- `agents.md` — provider registry and CLI

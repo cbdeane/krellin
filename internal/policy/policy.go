@@ -49,6 +49,9 @@ func ValidateMount(policy Policy, hostPath string) error {
 		return nil
 	}
 	clean := filepath.Clean(hostPath)
+	if policy.RepoRoot != "" && sameOrChild(clean, policy.RepoRoot) {
+		return nil
+	}
 	if clean == "/" {
 		return errors.New("mounting root is forbidden")
 	}
@@ -61,10 +64,7 @@ func ValidateMount(policy Policy, hostPath string) error {
 	if policy.RepoRoot == "" {
 		return errors.New("repo root is required for mount validation")
 	}
-	if !sameOrChild(clean, policy.RepoRoot) {
-		return errors.New("mount outside repo root is forbidden")
-	}
-	return nil
+	return errors.New("mount outside repo root is forbidden")
 }
 
 func sameOrChild(path, root string) bool {

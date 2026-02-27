@@ -18,7 +18,7 @@ func (r *recordClient) Subscribe(ctx context.Context) (<-chan []byte, error) { r
 func TestInputSendsAction(t *testing.T) {
 	buf := bytes.NewBufferString("echo hi\n")
 	rc := &recordClient{}
-	in := NewInput(rc, buf)
+	in := NewInput(rc, buf, bytes.NewBuffer(nil))
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
