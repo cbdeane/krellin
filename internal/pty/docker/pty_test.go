@@ -40,7 +40,14 @@ func TestFactoryExecArgs(t *testing.T) {
 	if fx.name != "docker" {
 		t.Fatalf("expected docker command")
 	}
-	expected := []string{"exec", "-it", "krellin-repo1", "sh"}
+	expected := []string{
+		"exec",
+		"-it",
+		"-e", "PS1=",
+		"-e", "PROMPT_COMMAND=",
+		"krellin-repo1",
+		"sh",
+	}
 	if len(fx.args) != len(expected) {
 		t.Fatalf("unexpected args: %v", fx.args)
 	}

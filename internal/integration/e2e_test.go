@@ -51,7 +51,7 @@ func TestDaemonSocketE2E(t *testing.T) {
 	}
 	defer conn.Close()
 
-	if err := daemon.WriteConnect(conn, sess.ID(), ""); err != nil {
+	if err := daemon.WriteConnect(conn, sess.ID(), "", true); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
 

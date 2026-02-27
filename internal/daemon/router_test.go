@@ -35,7 +35,7 @@ func TestRouterServeConnRoutesActions(t *testing.T) {
 
 	tr := NewTransport()
 	scanner := bufio.NewScanner(client)
-	if err := WriteConnect(client, sess.ID(), ""); err != nil {
+	if err := WriteConnect(client, sess.ID(), "", true); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
 	if !scanner.Scan() {

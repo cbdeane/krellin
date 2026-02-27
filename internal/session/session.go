@@ -223,18 +223,6 @@ func (s *Session) ensurePTY(ctx context.Context) error {
 			return
 		}
 		s.pty = conn
-		banner, _ := protocol.MarshalPayload(protocol.TerminalOutputPayload{
-			Stream: "stdout",
-			Data:   "[pty attached]\n",
-		})
-		s.Emit(protocol.Event{
-			EventID:   "pty-attached",
-			SessionID: s.id,
-			Timestamp: time.Now().UTC(),
-			Type:      protocol.EventTerminalOutput,
-			Source:    protocol.SourceExecutor,
-			Payload:   banner,
-		})
 		go s.streamPTY(ctx, conn)
 	})
 	return err

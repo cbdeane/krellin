@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -38,7 +39,13 @@ type tuiModel struct {
 	outputVP viewport.Model
 	inputVP  viewport.Model
 	ready    bool
-	pending  []string
+	showLogo bool
+	history  []string
+	histIdx  int
+	lastEsc  time.Time
+
+	actionLog []string
+	lastDiff  string
 }
 
 func newTUIModel(c client.Client, sessionID, agentID string) *tuiModel {
@@ -56,6 +63,8 @@ func newTUIModel(c client.Client, sessionID, agentID string) *tuiModel {
 		input:     ti,
 		outputVP:  viewport.New(),
 		inputVP:   viewport.New(),
+		showLogo:  true,
+		histIdx:   -1,
 	}
 }
 
@@ -72,30 +81,92 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "esc":
+		case "ctrl+c":
 			return m, tea.Quit
+		case "esc":
+			now := time.Now()
+			if !m.lastEsc.IsZero() && now.Sub(m.lastEsc) < 500*time.Millisecond {
+				m.input.SetValue("")
+				m.input.CursorStart()
+				m.lastEsc = time.Time{}
+				m.updateOutput()
+				return m, nil
+			}
+			m.lastEsc = now
+			return m, nil
+		case "up":
+			if m.input.Position() == 0 && len(m.history) > 0 {
+				if m.histIdx < 0 {
+					m.histIdx = len(m.history) - 1
+				} else if m.histIdx > 0 {
+					m.histIdx--
+				}
+				m.input.SetValue(m.history[m.histIdx])
+				m.input.CursorEnd()
+				m.updateOutput()
+				return m, nil
+			}
 		case "enter":
 			line := strings.TrimSpace(m.input.Value())
 			m.input.Reset()
 			if line == "" {
 				return m, nil
 			}
-			if !m.ready {
-				m.pending = append(m.pending, line)
-				m.appendTerminal("[waiting] queued command: " + line)
+			m.histIdx = -1
+			if line == "/exit" || line == "/quit" {
+				return m, tea.Quit
+			}
+			if line == "/clear" || line == "clear" {
+				m.terminal = nil
+				m.showLogo = false
+				m.updateOutput()
 				return m, nil
+			}
+			if line == "/log" {
+				if len(m.actionLog) == 0 {
+					m.appendTerminal("[log] no actions yet")
+					return m, nil
+				}
+				m.appendTerminal("[log] recent actions")
+				for _, entry := range m.actionLog {
+					m.appendTerminal("  " + entry)
+				}
+				return m, nil
+			}
+			if line == "/diff" {
+				if m.lastDiff == "" {
+					m.appendTerminal("[diff] no diff available")
+					return m, nil
+				}
+				diff := m.lastDiff
+				if !strings.HasSuffix(diff, "\n") {
+					diff += "\n"
+				}
+				m.appendTerminal("[diff]\n" + diff)
+				return m, nil
+			}
+			m.history = append(m.history, line)
+			if m.showLogo {
+				m.terminal = nil
+				m.showLogo = false
+				m.updateOutput()
+			}
+			if !m.ready {
+				m.ready = true
 			}
 			return m, m.sendActionCmd(line)
 		}
 	case eventMsg:
+		if !m.ready {
+			m.ready = true
+			m.applyEvent(msg.ev)
+			return m, nil
+		}
 		m.applyEvent(msg.ev)
 		return m, nil
 	case connectedMsg:
 		if !m.ready {
 			m.ready = true
-			if len(m.pending) > 0 {
-				return m, m.sendBatch(m.pending)
-			}
 		}
 		return m, nil
 	case errMsg:
@@ -174,18 +245,6 @@ func (m *tuiModel) sendActionCmd(line string) tea.Cmd {
 	}
 }
 
-func (m *tuiModel) sendBatch(lines []string) tea.Cmd {
-	if len(lines) == 0 {
-		return nil
-	}
-	m.pending = nil
-	cmds := make([]tea.Cmd, 0, len(lines))
-	for _, line := range lines {
-		cmds = append(cmds, m.sendActionCmd(line))
-	}
-	return tea.Batch(cmds...)
-}
-
 func (m *tuiModel) applyEvent(ev protocol.Event) {
 	switch ev.Type {
 	case protocol.EventTerminalOutput:
@@ -198,15 +257,29 @@ func (m *tuiModel) applyEvent(ev protocol.Event) {
 		if err := json.Unmarshal(ev.Payload, &payload); err == nil {
 			m.appendTerminal("[error] " + payload.Message)
 		}
+	case protocol.EventActionStarted:
+		var payload protocol.ActionStartedPayload
+		if err := json.Unmarshal(ev.Payload, &payload); err == nil {
+			m.appendActionLog(fmt.Sprintf("%s started %s (%s)", formatEventTime(ev.Timestamp), payload.ActionID, payload.Type))
+		}
 	case protocol.EventActionFinished:
 		var payload protocol.ActionFinishedPayload
-		if err := json.Unmarshal(ev.Payload, &payload); err == nil && payload.Status == "failure" {
-			m.appendTerminal("[error] action failed: " + payload.Error)
+		if err := json.Unmarshal(ev.Payload, &payload); err == nil {
+			m.appendActionLog(fmt.Sprintf("%s finished %s (%s)", formatEventTime(ev.Timestamp), payload.ActionID, payload.Status))
+			if payload.Status == "failure" {
+				m.appendTerminal("[error] action failed: " + payload.Error)
+			}
 		}
 	case protocol.EventAgentMessage:
 		var payload protocol.AgentMessagePayload
 		if err := json.Unmarshal(ev.Payload, &payload); err == nil {
 			m.appendTerminal("[agent] " + payload.Content)
+		}
+	case protocol.EventDiffReady:
+		var payload protocol.DiffReadyPayload
+		if err := json.Unmarshal(ev.Payload, &payload); err == nil {
+			m.lastDiff = payload.Patch
+			m.appendActionLog(fmt.Sprintf("%s diff ready (%d files)", formatEventTime(ev.Timestamp), len(payload.Files)))
 		}
 	}
 }
@@ -226,6 +299,20 @@ func (m *tuiModel) appendTerminal(data string) {
 	}
 	m.terminal = clampLines(m.terminal, 1000)
 	m.updateOutput()
+}
+
+func (m *tuiModel) appendActionLog(entry string) {
+	m.actionLog = append(m.actionLog, entry)
+	if len(m.actionLog) > 50 {
+		m.actionLog = m.actionLog[len(m.actionLog)-50:]
+	}
+}
+
+func formatEventTime(ts time.Time) string {
+	if ts.IsZero() {
+		return "--:--:--"
+	}
+	return ts.Local().Format("15:04:05")
 }
 
 func (m *tuiModel) resize() {
@@ -277,7 +364,11 @@ func (m *tuiModel) renderOutput(width, height int) string {
 	m.outputVP.Style = style
 	m.outputVP.SetWidth(width)
 	m.outputVP.SetHeight(height)
-	m.outputVP.SetContent(strings.Join(m.terminal, "\n"))
+	if m.showLogo && len(m.terminal) == 0 {
+		m.outputVP.SetContent(strings.Join(logoLines(), "\n"))
+	} else {
+		m.outputVP.SetContent(strings.Join(m.terminal, "\n"))
+	}
 	return m.outputVP.View()
 }
 
@@ -305,4 +396,17 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func logoLines() []string {
+	return []string{
+		"██╗  ██╗██████╗ ███████╗██╗     ██╗     ██╗███╗   ██╗",
+		"██║ ██╔╝██╔══██╗██╔════╝██║     ██║     ██║████╗  ██║",
+		"█████╔╝ ██████╔╝█████╗  ██║     ██║     ██║██╔██╗ ██║",
+		"██╔═██╗ ██╔══██╗██╔══╝  ██║     ██║     ██║██║╚██╗██║",
+		"██║  ██╗██║  ██║███████╗███████╗███████╗██║██║ ╚████║",
+		"╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝╚═╝╚═╝  ╚═══╝",
+		"",
+		"Local capsules. Serialized actions. No git automation.",
+	}
 }

@@ -25,7 +25,7 @@ func (c *SocketClient) SendAction(ctx context.Context, action []byte) error {
 		return err
 	}
 	defer conn.Close()
-	if err := daemon.WriteConnect(conn, c.sessionID, c.repoRoot); err != nil {
+	if err := daemon.WriteConnect(conn, c.sessionID, c.repoRoot, false); err != nil {
 		return err
 	}
 	if sessionID, err := readConnectResponse(conn); err == nil && sessionID != "" && c.sessionID == "" {
@@ -40,7 +40,7 @@ func (c *SocketClient) Subscribe(ctx context.Context) (<-chan []byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := daemon.WriteConnect(conn, c.sessionID, c.repoRoot); err != nil {
+	if err := daemon.WriteConnect(conn, c.sessionID, c.repoRoot, true); err != nil {
 		return nil, err
 	}
 	sessionID, err := readConnectResponse(conn)

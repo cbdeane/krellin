@@ -18,9 +18,10 @@ func NewRouter(d *Daemon, t *Transport) *Router {
 
 func (r *Router) ServeConn(ctx context.Context, conn net.Conn, sessionID string) error {
 	var repoRoot string
+	subscribe := true
 	if sessionID == "" {
 		var err error
-		sessionID, repoRoot, err = ReadConnect(conn)
+		sessionID, repoRoot, subscribe, err = ReadConnect(conn)
 		if err != nil {
 			return err
 		}
@@ -38,23 +39,26 @@ func (r *Router) ServeConn(ctx context.Context, conn net.Conn, sessionID string)
 	}
 	_ = WriteConnectResponse(conn, sessionID)
 
-	events, err := r.daemon.Subscribe(sessionID, 100)
-	if err != nil {
-		return err
-	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	sendErr := make(chan error, 1)
-	go func() {
-		for ev := range events {
-			if err := r.transport.SendEvent(ctx, conn, ev); err != nil {
-				sendErr <- err
-				return
-			}
+	var sendErr chan error
+	if subscribe {
+		events, err := r.daemon.Subscribe(sessionID, 100)
+		if err != nil {
+			return err
 		}
-		sendErr <- nil
-	}()
+		sendErr = make(chan error, 1)
+		go func() {
+			for ev := range events {
+				if err := r.transport.SendEvent(ctx, conn, ev); err != nil {
+					sendErr <- err
+					return
+				}
+			}
+			sendErr <- nil
+		}()
+	}
 
 	actionCh := make(chan protocol.Action, 8)
 	go func() {
@@ -67,7 +71,10 @@ func (r *Router) ServeConn(ctx context.Context, conn net.Conn, sessionID string)
 		case <-ctx.Done():
 			return ctx.Err()
 		case err := <-sendErr:
-			return err
+			if err != nil {
+				return err
+			}
+			sendErr = nil
 		case action, ok := <-actionCh:
 			if !ok {
 				return nil

@@ -117,23 +117,14 @@ func (h SessionHandler) Handle(ctx context.Context, action protocol.Action) erro
 		if cmd == "" {
 			return fmt.Errorf("command required")
 		}
-		if _, err := s.pty.Write([]byte(cmd + "\n")); err != nil {
-			return err
+		data := []byte(cmd + "\n")
+		for len(data) > 0 {
+			n, err := s.pty.Write(data)
+			if err != nil {
+				return err
+			}
+			data = data[n:]
 		}
-		// Echo command to terminal to improve visibility even if PTY output is delayed.
-		echo, _ := protocol.MarshalPayload(protocol.TerminalOutputPayload{
-			Stream: "stdout",
-			Data:   "> " + cmd + "\n",
-		})
-		s.Emit(protocol.Event{
-			EventID:   "command-echo",
-			SessionID: action.SessionID,
-			Timestamp: time.Now().UTC(),
-			Type:      protocol.EventTerminalOutput,
-			Source:    protocol.SourceExecutor,
-			AgentID:   action.AgentID,
-			Payload:   echo,
-		})
 		return nil
 	case protocol.ActionApplyPatch:
 		var payload protocol.ApplyPatchPayload

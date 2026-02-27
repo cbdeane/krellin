@@ -38,7 +38,16 @@ func NewFactoryWithStarter(execFactory ExecFactory, starter func(cmd *exec.Cmd) 
 }
 
 func (f *Factory) Exec(ctx context.Context, containerID string) (capsule.PTYConn, error) {
-	cmd := f.execFactory.CommandContext(ctx, "docker", "exec", "-it", containerID, "sh")
+	cmd := f.execFactory.CommandContext(
+		ctx,
+		"docker",
+		"exec",
+		"-it",
+		"-e", "PS1=",
+		"-e", "PROMPT_COMMAND=",
+		containerID,
+		"sh",
+	)
 	return f.ptyStarter(cmd)
 }
 
