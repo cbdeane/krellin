@@ -19,5 +19,4 @@ if [[ ! -S "$SOCK" ]]; then
   sleep 0.5
 fi
 
-echo "Starting TUI..."
 "$ROOT/krellin" -sock "$SOCK"

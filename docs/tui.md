@@ -2,7 +2,9 @@
 
 The TUI connects to the daemon and renders:
 - Timeline
-- Terminal output
+- Output (terminal stream)
 - Diff output
 
-Input lines are sent as `run_command` actions.
+Input is typed into the bottom input box:
+- `command` or `!command` sends a `run_command` action to the capsule.
+- `/agents` lists configured agent backends.

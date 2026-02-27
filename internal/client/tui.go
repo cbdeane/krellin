@@ -1,137 +1,80 @@
 package client
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"io"
-	"strings"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"krellin/internal/protocol"
 	"krellin/pkg/client"
 )
 
-// TUI is a minimal event renderer with timeline, terminal, and diff panes.
+// TUI renders the interactive terminal UI using Bubble Tea.
 type TUI struct {
 	client    client.Client
-	out       io.Writer
-	timeline  *Timeline
-	terminal  []string
-	diff      []string
-	input     *Input
 	sessionID string
 	agentID   string
-	mode      ViewMode
+	in        io.Reader
+	out       io.Writer
 }
 
 func NewTUI(c client.Client, out io.Writer, in io.Reader, sessionID string, agentID string) *TUI {
 	return &TUI{
 		client:    c,
-		out:       out,
-		timeline:  NewTimeline(8),
-		input:     NewInput(c, in, out),
 		sessionID: sessionID,
 		agentID:   agentID,
-		mode:      ViewAll,
+		in:        in,
+		out:       out,
 	}
 }
 
 func (t *TUI) Run(ctx context.Context) error {
-	w := bufio.NewWriter(t.out)
-	// Initial render so the user sees the UI immediately.
-	_, _ = w.WriteString(t.render())
-	_ = w.Flush()
+	model := newTUIModel(t.client, t.sessionID, t.agentID)
+	opts := []tea.ProgramOption{}
+	if t.in != nil {
+		opts = append(opts, tea.WithInput(t.in))
+	}
+	if t.out != nil {
+		opts = append(opts, tea.WithOutput(t.out))
+	}
+	program := tea.NewProgram(model, opts...)
 
 	go func() {
-		_ = t.input.Run(ctx, t.sessionID, t.agentID)
+		<-ctx.Done()
+		program.Send(tea.Quit())
 	}()
-	for {
-		events, err := t.client.Subscribe(ctx)
-		if err != nil {
-			t.terminal = clampLines(append(t.terminal, "[error] "+err.Error()+"\n"), 10)
-			_, _ = w.WriteString(t.render())
-			_ = w.Flush()
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(1 * time.Second):
-				continue
-			}
-		}
 
+	go func() {
 		for {
-			select {
-			case <-ctx.Done():
-				_ = w.Flush()
-				return ctx.Err()
-			case msg, ok := <-events:
-				if !ok {
-					_, _ = w.WriteString("[disconnected] retrying...\n")
-					_ = w.Flush()
-					time.Sleep(500 * time.Millisecond)
-					goto reconnect
+			events, err := t.client.Subscribe(ctx)
+			if err != nil {
+				program.Send(errMsg{err: err})
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(1 * time.Second):
+					continue
 				}
+			}
+			program.Send(connectedMsg{})
+			for msg := range events {
 				var ev protocol.Event
 				if err := json.Unmarshal(msg, &ev); err != nil {
 					continue
 				}
-				t.applyEvent(ev)
-				_, _ = w.WriteString(t.render())
-				_ = w.Flush()
+				program.Send(eventMsg{ev: ev})
+			}
+			program.Send(disconnectedMsg{})
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(500 * time.Millisecond):
 			}
 		}
-	reconnect:
-		continue
-	}
-}
+	}()
 
-func (t *TUI) applyEvent(ev protocol.Event) {
-	t.timeline.Add(ev)
-	switch ev.Type {
-	case protocol.EventTerminalOutput:
-		var payload protocol.TerminalOutputPayload
-		if err := json.Unmarshal(ev.Payload, &payload); err == nil {
-			t.terminal = clampLines(append(t.terminal, payload.Data), 10)
-			t.timeline.Add(protocol.Event{Type: protocol.EventTerminalOutput, Timestamp: time.Now(), Source: protocol.SourceExecutor, AgentID: ev.AgentID})
-		}
-	case protocol.EventDiffReady:
-		var payload protocol.DiffReadyPayload
-		if err := json.Unmarshal(ev.Payload, &payload); err == nil {
-			t.diff = clampLines(strings.Split(payload.Patch, "\n"), 12)
-		}
-	case protocol.EventError:
-		var payload protocol.ErrorPayload
-		if err := json.Unmarshal(ev.Payload, &payload); err == nil {
-			t.timeline.Add(ev)
-			t.terminal = clampLines(append(t.terminal, "[error] "+payload.Message+"\n"), 10)
-		}
-	case protocol.EventActionFinished:
-		var payload protocol.ActionFinishedPayload
-		if err := json.Unmarshal(ev.Payload, &payload); err == nil && payload.Status == "failure" {
-			t.terminal = clampLines(append(t.terminal, "[error] action failed: "+payload.Error+"\n"), 10)
-		}
-	case protocol.EventAgentMessage:
-		var payload protocol.AgentMessagePayload
-		if err := json.Unmarshal(ev.Payload, &payload); err == nil {
-			t.terminal = clampLines(append(t.terminal, "[agent] "+payload.Content+"\n"), 10)
-		}
-	}
-}
-
-func (t *TUI) render() string {
-	var b strings.Builder
-	b.WriteString("===== Krellin =====\n")
-	b.WriteString("Type a command and press Enter to run it in the capsule.\n")
-	if t.mode == ViewAll || t.mode == ViewTerminal {
-		b.WriteString(renderSection("Timeline", t.timeline.Render()))
-		b.WriteString("\n")
-		b.WriteString(renderSection("Terminal", strings.Join(t.terminal, "")))
-		b.WriteString("\n")
-	}
-	if t.mode == ViewAll || t.mode == ViewDiff {
-		b.WriteString(renderSection("Diff", renderLines(t.diff)))
-		b.WriteString("\n")
-	}
-	return b.String()
+	_, err := program.Run()
+	return err
 }

@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"net"
-	"time"
 
 	"krellin/internal/protocol"
 )
@@ -38,16 +37,6 @@ func (r *Router) ServeConn(ctx context.Context, conn net.Conn, sessionID string)
 		}
 	}
 	_ = WriteConnectResponse(conn, sessionID)
-	// Emit a direct connected message so clients can confirm the stream.
-	connectedPayload, _ := protocol.MarshalPayload(protocol.AgentMessagePayload{Content: "connected"})
-	_ = r.transport.SendEvent(ctx, conn, protocol.Event{
-		EventID:   "connected",
-		SessionID: sessionID,
-		Timestamp: time.Now().UTC(),
-		Type:      protocol.EventAgentMessage,
-		Source:    protocol.SourceSystem,
-		Payload:   connectedPayload,
-	})
 
 	events, err := r.daemon.Subscribe(sessionID, 100)
 	if err != nil {

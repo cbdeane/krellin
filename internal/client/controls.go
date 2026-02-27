@@ -1,9 +1,5 @@
 package client
 
-import (
-	"strings"
-)
-
 // ViewMode controls which panes are visible.
 type ViewMode int
 
@@ -29,12 +25,4 @@ func clampLines(lines []string, max int) []string {
 		return lines
 	}
 	return lines[len(lines)-max:]
-}
-
-func renderSection(title string, body string) string {
-	return "-- " + title + " --\n" + body
-}
-
-func renderLines(lines []string) string {
-	return strings.Join(lines, "\n")
 }
