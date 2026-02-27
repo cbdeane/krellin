@@ -23,6 +23,7 @@ type Provider struct {
 	BaseURL   string       `json:"base_url,omitempty"`
 	Model     string       `json:"model"`
 	APIKeyEnv string       `json:"api_key_env"`
+	APIKey    string       `json:"-"`
 	Enabled   bool         `json:"enabled"`
 	Notes     string       `json:"notes,omitempty"`
 }

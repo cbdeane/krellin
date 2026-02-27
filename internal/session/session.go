@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"krellin/internal/agents"
 	"krellin/internal/capsule"
 	"krellin/internal/executor"
 	"krellin/internal/patch"
@@ -15,79 +16,118 @@ import (
 )
 
 type Options struct {
-	SessionID   string
-	RepoRoot    string
-	CapsuleName string
-	Handler     executor.Handler
-	Capsule     capsule.Capsule
-	Policy      policy.Policy
-	ImageDigest string
-	NetworkOn   bool
-	CPUs        int
-	MemoryMB    int
-	Inventory   ContainersInventory
-	Patches     *patch.Bookkeeper
-	ConfigPath  string
-	Resolver    ImageResolver
-	Updater     ConfigUpdater
-	Publisher   ImagePublisher
-	PublishTo   string
-	Platforms   []string
+	SessionID       string
+	RepoRoot        string
+	CapsuleName     string
+	Handler         executor.Handler
+	Capsule         capsule.Capsule
+	Policy          policy.Policy
+	ImageDigest     string
+	NetworkOn       bool
+	CPUs            int
+	MemoryMB        int
+	Inventory       ContainersInventory
+	Patches         *patch.Bookkeeper
+	ConfigPath      string
+	Resolver        ImageResolver
+	Updater         ConfigUpdater
+	Publisher       ImagePublisher
+	PublishTo       string
+	Platforms       []string
+	AgentsStore     AgentsStore
+	AgentsSelection AgentsSelectionStore
+	AgentsChecker   AgentsChecker
+	AgentsRunner    AgentsRunner
+	AgentsSecrets   AgentsSecretsStore
+}
+
+type AgentsStore interface {
+	Load() ([]agents.Provider, error)
+	Save([]agents.Provider) error
+}
+
+type AgentsSelectionStore interface {
+	Load() (agents.Selection, error)
+	Save(agents.Selection) error
+}
+
+type AgentsChecker interface {
+	Check(ctx context.Context, provider agents.Provider) string
+}
+
+type AgentsRunner interface {
+	Prompt(ctx context.Context, provider agents.Provider, prompt string) (string, error)
+}
+
+type AgentsSecretsStore interface {
+	Get(providerName string) (string, error)
+	Set(providerName string, secret string) error
+	Delete(providerName string) error
 }
 
 type Session struct {
-	id          string
-	repoRoot    string
-	capsuleName string
-	queue       *queue.Queue[protocol.Action]
-	executor    *executor.Executor
-	subscribers map[chan protocol.Event]struct{}
-	mu          sync.Mutex
-	startOnce   sync.Once
-	ptyOnce     sync.Once
-	started     bool
-	startedEvent *protocol.Event
-	lastErrorEvent *protocol.Event
-	capsule     capsule.Capsule
-	policy      policy.Policy
-	imageDigest string
-	networkOn   bool
-	cpus        int
-	memoryMB    int
-	handle      capsule.Handle
-	pty         capsule.PTYConn
-	inventory   ContainersInventory
-	patches     *patch.Bookkeeper
-	configPath  string
-	resolver    ImageResolver
-	updater     ConfigUpdater
-	publisher   ImagePublisher
-	publishTo   string
-	platforms   []string
+	id              string
+	repoRoot        string
+	capsuleName     string
+	queue           *queue.Queue[protocol.Action]
+	executor        *executor.Executor
+	subscribers     map[chan protocol.Event]struct{}
+	mu              sync.Mutex
+	startOnce       sync.Once
+	ptyOnce         sync.Once
+	started         bool
+	startedEvent    *protocol.Event
+	lastErrorEvent  *protocol.Event
+	capsule         capsule.Capsule
+	policy          policy.Policy
+	imageDigest     string
+	networkOn       bool
+	cpus            int
+	memoryMB        int
+	handle          capsule.Handle
+	pty             capsule.PTYConn
+	inventory       ContainersInventory
+	patches         *patch.Bookkeeper
+	configPath      string
+	resolver        ImageResolver
+	updater         ConfigUpdater
+	publisher       ImagePublisher
+	publishTo       string
+	platforms       []string
+	agentsStore     AgentsStore
+	agentsSelection AgentsSelectionStore
+	agentsChecker   AgentsChecker
+	agentsRunner    AgentsRunner
+	agentsSecrets   AgentsSecretsStore
 }
 
 func New(opts Options) *Session {
 	q := queue.New[protocol.Action]()
 	s := &Session{
-		id:          opts.SessionID,
-		repoRoot:    opts.RepoRoot,
-		capsuleName: opts.CapsuleName,
-		queue:       q,
-		subscribers: map[chan protocol.Event]struct{}{},
-		capsule:     opts.Capsule,
-		policy:      opts.Policy,
-		imageDigest: opts.ImageDigest,
-		networkOn:   opts.NetworkOn,
-		cpus:        opts.CPUs,
-		memoryMB:    opts.MemoryMB,
-		inventory:   opts.Inventory,
-		patches:     opts.Patches,
-		configPath:  opts.ConfigPath,
-		resolver:    opts.Resolver,
-		updater:     opts.Updater,
-		publisher:   opts.Publisher,
-		publishTo:   opts.PublishTo,
-		platforms:   opts.Platforms,
+		id:              opts.SessionID,
+		repoRoot:        opts.RepoRoot,
+		capsuleName:     opts.CapsuleName,
+		queue:           q,
+		subscribers:     map[chan protocol.Event]struct{}{},
+		capsule:         opts.Capsule,
+		policy:          opts.Policy,
+		imageDigest:     opts.ImageDigest,
+		networkOn:       opts.NetworkOn,
+		cpus:            opts.CPUs,
+		memoryMB:        opts.MemoryMB,
+		inventory:       opts.Inventory,
+		patches:         opts.Patches,
+		configPath:      opts.ConfigPath,
+		resolver:        opts.Resolver,
+		updater:         opts.Updater,
+		publisher:       opts.Publisher,
+		publishTo:       opts.PublishTo,
+		platforms:       opts.Platforms,
+		agentsStore:     opts.AgentsStore,
+		agentsSelection: opts.AgentsSelection,
+		agentsChecker:   opts.AgentsChecker,
+		agentsRunner:    opts.AgentsRunner,
+		agentsSecrets:   opts.AgentsSecrets,
 	}
 	handler := opts.Handler
 	if handler == nil {

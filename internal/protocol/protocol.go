@@ -11,14 +11,19 @@ const ProtocolVersion = 1
 type ActionType string
 
 const (
-	ActionRunCommand    ActionType = "run_command"
-	ActionApplyPatch    ActionType = "apply_patch"
-	ActionFreeze        ActionType = "freeze"
-	ActionReset         ActionType = "reset"
-	ActionNetworkToggle ActionType = "network_toggle"
-	ActionContainersList ActionType = "containers_list"
-	ActionRevert        ActionType = "revert"
-	ActionAgentsList    ActionType = "agents_list"
+	ActionRunCommand      ActionType = "run_command"
+	ActionApplyPatch      ActionType = "apply_patch"
+	ActionFreeze          ActionType = "freeze"
+	ActionReset           ActionType = "reset"
+	ActionNetworkToggle   ActionType = "network_toggle"
+	ActionContainersList  ActionType = "containers_list"
+	ActionRevert          ActionType = "revert"
+	ActionAgentsList      ActionType = "agents_list"
+	ActionAgentsSetActive ActionType = "agents_set_active"
+	ActionAgentsToggle    ActionType = "agents_toggle"
+	ActionAgentsAdd       ActionType = "agents_add"
+	ActionAgentPrompt     ActionType = "agent_prompt"
+	ActionAgentsDelete    ActionType = "agents_delete"
 )
 
 type Action struct {
@@ -48,6 +53,7 @@ const (
 	EventActionFinished EventType = "action.finished"
 	EventTerminalOutput EventType = "terminal.output"
 	EventAgentMessage   EventType = "agent.message"
+	EventAgentsList     EventType = "agents.list"
 	EventDiffReady      EventType = "diff.ready"
 	EventFreezeCreated  EventType = "freeze.created"
 	EventResetCompleted EventType = "reset.completed"
@@ -89,6 +95,33 @@ type NetworkTogglePayload struct {
 	Enabled bool `json:"enabled"`
 }
 
+type AgentsSetActivePayload struct {
+	Name string `json:"name"`
+}
+
+type AgentsTogglePayload struct {
+	Name    string `json:"name"`
+	Enabled bool   `json:"enabled"`
+}
+
+type AgentsAddPayload struct {
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	Model     string `json:"model"`
+	BaseURL   string `json:"base_url,omitempty"`
+	APIKeyEnv string `json:"api_key_env"`
+	APIKey    string `json:"api_key,omitempty"`
+	Enabled   bool   `json:"enabled"`
+}
+
+type AgentsDeletePayload struct {
+	Name string `json:"name"`
+}
+
+type AgentPromptPayload struct {
+	Content string `json:"content"`
+}
+
 // Event payloads.
 type SessionStartedPayload struct {
 	RepoRoot    string `json:"repo_root"`
@@ -117,6 +150,22 @@ type TerminalOutputPayload struct {
 
 type AgentMessagePayload struct {
 	Content string `json:"content"`
+}
+
+type AgentProviderInfo struct {
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	Model     string `json:"model"`
+	BaseURL   string `json:"base_url,omitempty"`
+	APIKeyEnv string `json:"api_key_env"`
+	HasAPIKey bool   `json:"has_api_key"`
+	Enabled   bool   `json:"enabled"`
+	Status    string `json:"status,omitempty"`
+}
+
+type AgentsListPayload struct {
+	Providers []AgentProviderInfo `json:"providers"`
+	Active    string              `json:"active"`
 }
 
 type DiffReadyPayload struct {
@@ -150,14 +199,19 @@ type ErrorPayload struct {
 }
 
 var validActionTypes = map[ActionType]struct{}{
-	ActionRunCommand:    {},
-	ActionApplyPatch:    {},
-	ActionFreeze:        {},
-	ActionReset:         {},
-	ActionNetworkToggle: {},
-	ActionContainersList: {},
-	ActionRevert:        {},
-	ActionAgentsList:    {},
+	ActionRunCommand:      {},
+	ActionApplyPatch:      {},
+	ActionFreeze:          {},
+	ActionReset:           {},
+	ActionNetworkToggle:   {},
+	ActionContainersList:  {},
+	ActionRevert:          {},
+	ActionAgentsList:      {},
+	ActionAgentsSetActive: {},
+	ActionAgentsToggle:    {},
+	ActionAgentsAdd:       {},
+	ActionAgentPrompt:     {},
+	ActionAgentsDelete:    {},
 }
 
 var validEventTypes = map[EventType]struct{}{
@@ -168,6 +222,7 @@ var validEventTypes = map[EventType]struct{}{
 	EventActionFinished: {},
 	EventTerminalOutput: {},
 	EventAgentMessage:   {},
+	EventAgentsList:     {},
 	EventDiffReady:      {},
 	EventFreezeCreated:  {},
 	EventResetCompleted: {},

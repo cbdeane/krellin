@@ -7,15 +7,16 @@ import (
 	"path/filepath"
 	"time"
 
+	"krellin/internal/agents"
 	dockercapsule "krellin/internal/capsule/docker"
 	"krellin/internal/config"
 	"krellin/internal/containers"
 	"krellin/internal/images"
 	"krellin/internal/patch"
 	"krellin/internal/policy"
+	"krellin/internal/pty/docker"
 	"krellin/internal/repo"
 	"krellin/internal/session"
-	"krellin/internal/pty/docker"
 )
 
 const defaultImageTag = "ubuntu:latest"
@@ -58,24 +59,29 @@ func BuildSession(ctx context.Context, repoRoot string) (*session.Session, error
 	pol.Resources.MemoryMB = cfg.Resources.MemoryMB
 
 	sess := session.New(session.Options{
-		SessionID:   "", // assigned by daemon
-		RepoRoot:    root,
-		CapsuleName: "krellin-" + repoID(root),
-		Handler:     nil,
-		Capsule:     caps,
-		Policy:      pol,
-		ImageDigest: cfg.Capsule.Image,
-		NetworkOn:   cfg.Policy.Network == config.NetworkOn,
-		CPUs:        cfg.Resources.CPUs,
-		MemoryMB:    cfg.Resources.MemoryMB,
-		Inventory:   inv,
-		Patches:     patch.NewBookkeeper(root),
-		ConfigPath:  cfgPath,
-		Resolver:    resolver,
-		Updater:     session.DefaultConfigUpdater(),
-		Publisher:   publisher,
-		PublishTo:   cfg.Freeze.Publish,
-		Platforms:   cfg.Freeze.Platforms,
+		SessionID:       "", // assigned by daemon
+		RepoRoot:        root,
+		CapsuleName:     "krellin-" + repoID(root),
+		Handler:         nil,
+		Capsule:         caps,
+		Policy:          pol,
+		ImageDigest:     cfg.Capsule.Image,
+		NetworkOn:       cfg.Policy.Network == config.NetworkOn,
+		CPUs:            cfg.Resources.CPUs,
+		MemoryMB:        cfg.Resources.MemoryMB,
+		Inventory:       inv,
+		Patches:         patch.NewBookkeeper(root),
+		ConfigPath:      cfgPath,
+		Resolver:        resolver,
+		Updater:         session.DefaultConfigUpdater(),
+		Publisher:       publisher,
+		PublishTo:       cfg.Freeze.Publish,
+		Platforms:       cfg.Freeze.Platforms,
+		AgentsStore:     agents.NewStore(agents.DefaultPath()),
+		AgentsSelection: agents.NewSelectionStore(agents.DefaultSelectionPath()),
+		AgentsChecker:   agents.DefaultChecker{},
+		AgentsRunner:    agents.HTTPRunner{},
+		AgentsSecrets:   agents.NewKeyringStore(),
 	})
 	return sess, nil
 }

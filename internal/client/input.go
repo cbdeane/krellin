@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -47,18 +48,39 @@ func (i *Input) Run(ctx context.Context, sessionID string, agentID string) error
 			continue
 		}
 		if strings.HasPrefix(line, "!") {
-			line = strings.TrimSpace(strings.TrimPrefix(line, "!"))
-			if line == "" {
+			if isLocalGitCommand(line) {
+				if err := i.runLocalCommand(ctx, line); err != nil {
+					return err
+				}
 				continue
 			}
+			cmd := strings.TrimSpace(strings.TrimPrefix(line, "!"))
+			if cmd == "" {
+				continue
+			}
+			action := protocol.Action{
+				ActionID:  "local",
+				SessionID: sessionID,
+				AgentID:   agentID,
+				Type:      protocol.ActionRunCommand,
+				Timestamp: time.Now(),
+				Payload:   encodeJSON(protocol.RunCommandPayload{Command: cmd, Cwd: "/workspace"}),
+			}
+			if err := i.client.SendAction(ctx, encodeJSON(action)); err != nil {
+				return err
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "/") {
+			continue
 		}
 		action := protocol.Action{
 			ActionID:  "local",
 			SessionID: sessionID,
 			AgentID:   agentID,
-			Type:      protocol.ActionRunCommand,
+			Type:      protocol.ActionAgentPrompt,
 			Timestamp: time.Now(),
-			Payload:   encodeJSON(protocol.RunCommandPayload{Command: line, Cwd: "/workspace"}),
+			Payload:   encodeJSON(protocol.AgentPromptPayload{Content: line}),
 		}
 		if err := i.client.SendAction(ctx, encodeJSON(action)); err != nil {
 			return err
@@ -70,4 +92,16 @@ func (i *Input) Run(ctx context.Context, sessionID string, agentID string) error
 func encodeJSON(v any) []byte {
 	data, _ := json.Marshal(v)
 	return data
+}
+
+func (i *Input) runLocalCommand(ctx context.Context, line string) error {
+	cmd := strings.TrimSpace(strings.TrimPrefix(line, "!"))
+	if cmd == "" {
+		return nil
+	}
+	out, err := exec.CommandContext(ctx, "sh", "-c", cmd).CombinedOutput()
+	if i.out != nil && len(out) > 0 {
+		_, _ = i.out.Write(out)
+	}
+	return err
 }

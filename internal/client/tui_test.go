@@ -14,28 +14,18 @@ type fakeClient struct {
 	events chan []byte
 }
 
-func (f *fakeClient) SendAction(ctx context.Context, action []byte) error { return nil }
+func (f *fakeClient) SendAction(ctx context.Context, action []byte) error  { return nil }
 func (f *fakeClient) Subscribe(ctx context.Context) (<-chan []byte, error) { return f.events, nil }
 
 func TestTUIRender(t *testing.T) {
-	buf := &bytes.Buffer{}
 	client := &fakeClient{events: make(chan []byte, 2)}
-	tui := NewTUI(client, buf, bytes.NewBuffer(nil), "s1", "agent")
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go func() {
-		_ = tui.Run(ctx)
-	}()
-
+	model := newTUIModel(client, "s1", "agent")
 	ev := protocol.Event{Type: protocol.EventTerminalOutput, Timestamp: time.Now(), Payload: mustJSON(protocol.TerminalOutputPayload{Stream: "stdout", Data: "ok\n"})}
-	client.events <- mustJSON(ev)
-	time.Sleep(20 * time.Millisecond)
-	cancel()
-
-	if !bytes.Contains(buf.Bytes(), []byte("Timeline")) {
-		t.Fatalf("expected timeline in output")
+	next, _ := model.Update(eventMsg{ev: ev})
+	model = next.(*tuiModel)
+	view := model.View().Content
+	if !bytes.Contains([]byte(view), []byte("ok")) {
+		t.Fatalf("expected terminal output in view, got %q", view)
 	}
 }
 
