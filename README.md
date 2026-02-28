@@ -2,18 +2,27 @@
 
 ![Krellin TUI](docs/assets/krellin.png)
 
-Krellin is a local-first coding runtime that pairs a daemon with per-repo Docker “capsules.” It gives LLM agents a controlled terminal + filesystem inside the capsule while keeping your host safe. Sessions are serialized, diffs are tracked, and you can reset or freeze environments.
+Krellin is a local-first runtime for AI-assisted development. It pairs a daemon with per‑repo Docker capsules so agents can run real commands and edit real files without touching your host machine. It keeps work serialized, makes changes traceable, and gives you deterministic resets.
 
-**Status:** This project is under active development. Expect breaking changes and rough edges.
+**Status:** Under active development. Expect breaking changes and rough edges.
+
+## Why it exists
+
+Krellin is built so you can let an agent do real work without worrying about your host machine. The core idea is simple: **do everything in a sandboxed capsule**, and make that sandbox **repeatable and resettable**.
+
+- **Safety by default**: no host home mount, no Docker socket, no silent privilege escalation.
+- **Deterministic state**: capsules are pinned to immutable image digests, not floating tags.
+- **Auditable changes**: everything goes through a serialized action queue with diffs and logs.
+- **Fast rollback**: reset the capsule to a known image, or freeze current state for the team.
 
 ## What you get
 
 - **Daemon + TUI**: `krellind` manages sessions; `krellin` is the terminal UI client.
 - **Capsules**: one persistent container per repo; repo is mounted at `/workspace`.
-- **Agent providers**: OpenAI, Anthropic, Gemini, Grok, LLaMA (OpenAI-compatible).
-- **Tooling**: agent tool calls execute inside the capsule (shell, read/write, search, apply_patch).
-- **Reset/Freeze**: reset a capsule to pinned image; freeze current state into a new image digest.
-- **Safety defaults**: forbidden mounts, no docker socket, no host home mount.
+- **Agent providers**: OpenAI, Anthropic, Gemini, Grok, LLaMA (OpenAI‑compatible).
+- **Tooling**: agent tool calls run inside the capsule (shell, read/write, search, apply_patch).
+- **Reset/Freeze**: reset to a pinned image; freeze the current state into a new digest.
+- **Safety defaults**: forbidden mounts, no Docker socket, no host home mount.
 
 ## Quick start
 
@@ -32,7 +41,10 @@ version = 1
 
 [capsule]
 image = "dokken/ubuntu-24.04@sha256:..."
-user = "root" # optional; root skips cap-drop/no-new-privileges
+# Run as root inside the capsule (default for development ergonomics).
+# This allows unrestricted package installs and system changes *within the container*.
+# Host system remains isolated and protected by default.
+user = "root"
 
 [policy]
 network = "on" # on | off
@@ -46,6 +58,11 @@ publish = ""
 platforms = []
 mode = "clean"
 ```
+
+## What this is not
+
+- Not a git automation tool. You keep control of your repo history.
+- Not a cloud service. Everything runs locally.
 
 ## Providers
 
