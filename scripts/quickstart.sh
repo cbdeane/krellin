@@ -45,4 +45,4 @@ if [[ ! -S "$SOCK" ]]; then
 fi
 
 say "Launching TUI..."
-(cd "$ROOT" && "$ROOT/krellin" -sock "$SOCK")
+(cd "$ROOT" && "$ROOT/krellin" -sock "$SOCK" -repo "$ROOT")
