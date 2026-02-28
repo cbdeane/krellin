@@ -1,5 +1,7 @@
 # Krellin
 
+![Krellin TUI](docs/assets/krellin.png)
+
 Krellin is a local-first coding runtime that pairs a daemon with per-repo Docker “capsules.” It gives LLM agents a controlled terminal + filesystem inside the capsule while keeping your host safe. Sessions are serialized, diffs are tracked, and you can reset or freeze environments.
 
 **Status:** This project is under active development. Expect breaking changes and rough edges.
