@@ -307,11 +307,7 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.appendTerminal("[diff] no diff available")
 					return m, nil
 				}
-				diff := m.lastDiff
-				if !strings.HasSuffix(diff, "\n") {
-					diff += "\n"
-				}
-				m.appendTerminal("[diff]\n" + diff)
+				m.appendTerminal(formatDiff(m.lastDiff))
 				return m, nil
 			}
 			if strings.HasPrefix(line, "/mouse") {
@@ -894,6 +890,31 @@ func mouseTempResetCmd() tea.Cmd {
 	return tea.Tick(1500*time.Millisecond, func(time.Time) tea.Msg {
 		return mouseTempResetMsg{}
 	})
+}
+
+func formatDiff(diff string) string {
+	diff = strings.TrimRight(diff, "\n")
+	if diff == "" {
+		return "[diff] no diff available"
+	}
+	lines := strings.Split(diff, "\n")
+	var out strings.Builder
+	out.WriteString("◆ diff\n\n")
+	for _, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "+++ "), strings.HasPrefix(line, "--- "):
+			out.WriteString("  " + line + "\n")
+		case strings.HasPrefix(line, "@@"):
+			out.WriteString("  " + line + "\n")
+		case strings.HasPrefix(line, "+"):
+			out.WriteString("  " + line + "\n")
+		case strings.HasPrefix(line, "-"):
+			out.WriteString("  " + line + "\n")
+		default:
+			out.WriteString("  " + line + "\n")
+		}
+	}
+	return out.String()
 }
 
 func (m *tuiModel) renderAgentsModal(width, height int) string {
