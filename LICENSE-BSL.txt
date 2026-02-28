@@ -1,0 +1,37 @@
+The Licensed Work is licensed under the Business Source License Version 1.1 (the “License”).
+
+Copyright © 2026 Charlie Deane
+
+Parameters
+
+Licensor: Charles Deane
+Licensed Work: Krellin
+Change Date: None
+Change License: Apache License, Version 2.0
+
+Usage Limitation
+
+You may not:
+
+- Offer the Licensed Work as a hosted, managed, or Software-as-a-Service offering
+- Use the Licensed Work to provide a competing database access proxy, security proxy, or policy enforcement product
+- Redistribute, sublicense, or sell the Licensed Work or derivative works for commercial purposes
+- Embed the Licensed Work into a commercial product or platform without a commercial license
+
+You may:
+
+- View, evaluate, and modify the Licensed Work
+- Deploy the Licensed Work internally for evaluation or production use
+- Use the Licensed Work for research, testing, or internal infrastructure purposes
+
+Commercial use beyond the above requires a separate commercial license.
+
+Disclaimer
+
+The Licensed Work is provided “AS IS”, without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose, and non-infringement.
+
+Full License Text
+
+This work is licensed under the Business Source License 1.1.
+
+A copy of the BSL 1.1 text is available from MariaDB at: https://mariadb.com/bsl11/

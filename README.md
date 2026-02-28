@@ -101,3 +101,10 @@ See `docs/README.md` for full docs:
 
 - This is a Docker-backed runtime; Docker must be installed and running.
 - Reset recreates the capsule from the pinned digest; volumes are preserved unless disabled.
+
+## License
+
+Krellin is licensed under the Business Source License 1.1. Commercial licensing terms are available for hosted use, redistribution, or embedding.
+
+- `LICENSE-BSL.txt`
+- `LICENSE-COMMERCIAL.md`
