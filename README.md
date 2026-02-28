@@ -42,7 +42,7 @@ This builds `krellind` + `krellin`, starts the daemon, and opens the TUI.
 
 ## Configuration (.krellinrc)
 
-Krellin uses a repo-local `.krellinrc` (TOML). Image must be digest-pinned.
+Krellin uses a repo-local `.krellinrc` (TOML). Image must be digest-pinned. See `.krellinrc.example` to get started.
 
 ```toml
 version = 1

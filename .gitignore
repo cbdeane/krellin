@@ -2,6 +2,8 @@
 /bin/
 /build/
 /dist/
+/krellin
+/krellind
 *.exe
 *.out
 *.test
@@ -32,3 +34,9 @@ Thumbs.db
 
 # Local temp
 /tmp/
+
+# Local prompts
+prompt.md
+
+# Repo-local config
+.krellinrc
