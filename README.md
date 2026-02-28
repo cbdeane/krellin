@@ -2,7 +2,9 @@
 
 ![Krellin TUI](docs/assets/krellin.png)
 
-Krellin is a local-first runtime for AI-assisted development. It pairs a daemon with per‑repo Docker capsules so agents can run real commands and edit real files without touching your host machine. It keeps work serialized, makes changes traceable, and gives you deterministic resets.
+Krellin is a local-first runtime for AI-assisted development. It pairs a daemon with per‑repo Docker capsules so agents can run real commands and edit real files without touching your host machine. It serializes execution, makes every change traceable, and provides deterministic resets.
+Krellin is a local control plane for executing AI agents inside isolated runtime capsules.
+Krellin gives agents full control inside the capsule, while enforcing a hard boundary that prevents any modification of the host system.
 
 **Status:** Under active development. Expect breaking changes and rough edges.
 
@@ -12,14 +14,14 @@ Krellin is built so you can let an agent do real work without worrying about you
 
 - **Safety by default**: no host home mount, no Docker socket, no silent privilege escalation.
 - **Deterministic state**: capsules are pinned to immutable image digests, not floating tags.
-- **Auditable changes**: everything goes through a serialized action queue with diffs and logs.
+- **Auditable changes**: everything flows through a serialized action queue and executor with diffs and logs.
 - **Fast rollback**: reset the capsule to a known image, or freeze current state for the team.
 
 ## What you get
 
 - **Daemon + TUI**: `krellind` manages sessions; `krellin` is the terminal UI client.
 - **Capsules**: one persistent container per repo; repo is mounted at `/workspace`.
-- **Agent providers**: OpenAI, Anthropic, Gemini, Grok, LLaMA (OpenAI‑compatible).
+- **Agent providers**: Gemini and LLaMA (tested). OpenAI, Anthropic, and Grok supported via adapters.
 - **Tooling**: agent tool calls run inside the capsule (shell, read/write, search, apply_patch).
 - **Reset/Freeze**: reset to a pinned image; freeze the current state into a new digest.
 - **Safety defaults**: forbidden mounts, no Docker socket, no host home mount.
