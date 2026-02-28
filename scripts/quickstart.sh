@@ -26,8 +26,11 @@ if [[ ! -f "$ROOT/go.mod" ]]; then
 fi
 
 say "Building Krellin..."
-go build -o "$ROOT/krellind" "$ROOT/cmd/krellind"
-go build -o "$ROOT/krellin" "$ROOT/cmd/krellin"
+(
+  cd "$ROOT"
+  go build -o "$ROOT/krellind" ./cmd/krellind
+  go build -o "$ROOT/krellin" ./cmd/krellin
+)
 
 SOCK="${KRELLIN_SOCK:-/tmp/krellin.sock}"
 
