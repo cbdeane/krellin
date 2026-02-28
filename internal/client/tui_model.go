@@ -280,7 +280,7 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.updateOutput()
 				return m, nil
 			}
-		case "enter":
+		case "enter", "return":
 			line := strings.TrimSpace(m.input.Value())
 			m.input.Reset()
 			if line == "" {
