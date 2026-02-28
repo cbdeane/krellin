@@ -29,6 +29,12 @@ Krellin is built so you can let an agent do real work without worrying about you
 ## Quick start
 
 ```sh
+curl -fsSL https://raw.githubusercontent.com/cbdeane/krellin/main/scripts/quickstart.sh | bash
+```
+
+or, if you already have the repo:
+
+```sh
 scripts/run_tui.sh
 ```
 
