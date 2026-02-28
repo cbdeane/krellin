@@ -34,6 +34,7 @@ type localCmdResultMsg struct {
 }
 
 type thinkTickMsg struct{}
+type mouseTempResetMsg struct{}
 
 type tuiModel struct {
 	client    client.Client
@@ -77,6 +78,10 @@ type tuiModel struct {
 	thinking     bool
 	pendingAgent bool
 	thinkFrame   int
+
+	mouseEnabled bool
+	autoScroll   bool
+	mouseTemp    bool
 }
 
 func newTUIModel(c client.Client, sessionID, agentID string) *tuiModel {
@@ -87,16 +92,22 @@ func newTUIModel(c client.Client, sessionID, agentID string) *tuiModel {
 	ti.CharLimit = 512
 	ti.SetWidth(60)
 
+	out := viewport.New()
+	out.MouseWheelEnabled = true
+	out.MouseWheelDelta = 3
+
 	return &tuiModel{
-		client:      c,
-		sessionID:   sessionID,
-		agentID:     agentID,
-		input:       ti,
-		outputVP:    viewport.New(),
-		inputVP:     viewport.New(),
-		showLogo:    true,
-		histIdx:     -1,
-		localRunner: defaultLocalRunner,
+		client:       c,
+		sessionID:    sessionID,
+		agentID:      agentID,
+		input:        ti,
+		outputVP:     out,
+		inputVP:      viewport.New(),
+		showLogo:     true,
+		histIdx:      -1,
+		localRunner:  defaultLocalRunner,
+		mouseEnabled: true,
+		autoScroll:   true,
 	}
 }
 
@@ -112,6 +123,34 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resize()
 		return m, nil
 	case tea.KeyMsg:
+		if !m.agentsOpen {
+			switch msg.String() {
+			case "pgup", "ctrl+u":
+				m.outputVP.ScrollUp(m.outputVP.Height() / 2)
+				m.autoScroll = m.outputVP.AtBottom()
+				return m, nil
+			case "pgdown", "ctrl+d":
+				m.outputVP.ScrollDown(m.outputVP.Height() / 2)
+				m.autoScroll = m.outputVP.AtBottom()
+				return m, nil
+			case "shift+up":
+				m.outputVP.ScrollUp(1)
+				m.autoScroll = m.outputVP.AtBottom()
+				return m, nil
+			case "shift+down":
+				m.outputVP.ScrollDown(1)
+				m.autoScroll = m.outputVP.AtBottom()
+				return m, nil
+			case "home":
+				m.outputVP.GotoTop()
+				m.autoScroll = false
+				return m, nil
+			case "end":
+				m.outputVP.GotoBottom()
+				m.autoScroll = true
+				return m, nil
+			}
+		}
 		if m.agentsOpen {
 			if m.agentsMode == "add" {
 				switch msg.String() {
@@ -275,6 +314,23 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.appendTerminal("[diff]\n" + diff)
 				return m, nil
 			}
+			if strings.HasPrefix(line, "/mouse") {
+				arg := strings.TrimSpace(strings.TrimPrefix(line, "/mouse"))
+				switch arg {
+				case "on":
+					m.mouseEnabled = true
+				case "off":
+					m.mouseEnabled = false
+				default:
+					m.mouseEnabled = !m.mouseEnabled
+				}
+				state := "disabled"
+				if m.mouseEnabled {
+					state = "enabled"
+				}
+				m.appendTerminalLine("• mouse wheel " + state + " (use /mouse on|off)")
+				return m, nil
+			}
 			m.history = append(m.history, line)
 			if m.showLogo {
 				m.terminal = nil
@@ -300,6 +356,25 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.dispatchInputCmd(line)
 		}
+	case tea.MouseMsg:
+		if m.agentsOpen || !m.mouseEnabled {
+			return m, nil
+		}
+		if msg.Mouse().Mod&tea.ModShift != 0 {
+			m.mouseEnabled = false
+			m.mouseTemp = true
+			return m, mouseTempResetCmd()
+		}
+		var cmd tea.Cmd
+		m.outputVP, cmd = m.outputVP.Update(msg)
+		m.autoScroll = m.outputVP.AtBottom()
+		return m, cmd
+	case mouseTempResetMsg:
+		if m.mouseTemp {
+			m.mouseTemp = false
+			m.mouseEnabled = true
+		}
+		return m, nil
 	case eventMsg:
 		if !m.ready {
 			m.ready = true
@@ -380,6 +455,9 @@ func (m *tuiModel) View() tea.View {
 	}
 	view := tea.NewView(content)
 	view.AltScreen = true
+	if m.mouseEnabled {
+		view.MouseMode = tea.MouseModeCellMotion
+	}
 	return view
 }
 
@@ -731,7 +809,9 @@ func (m *tuiModel) updateOutput() {
 		lines = append(lines, m.thinkingOutputLine())
 	}
 	m.outputVP.SetContent(strings.Join(lines, "\n"))
-	m.outputVP.GotoBottom()
+	if m.autoScroll {
+		m.outputVP.GotoBottom()
+	}
 	m.inputVP.SetContent(m.input.View() + "\n" + m.thinkingLine())
 }
 
@@ -762,7 +842,9 @@ func (m *tuiModel) renderOutput(width, height int) string {
 			lines = append(lines, m.thinkingOutputLine())
 		}
 		m.outputVP.SetContent(strings.Join(lines, "\n"))
-		m.outputVP.GotoBottom()
+		if m.autoScroll {
+			m.outputVP.GotoBottom()
+		}
 	}
 	return m.outputVP.View()
 }
@@ -806,6 +888,12 @@ func (m *tuiModel) thinkingOutputLine() string {
 	frame := thinkFrames[m.thinkFrame%len(thinkFrames)]
 	style := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#9AD1D4"))
 	return style.Render("◆") + " " + "thinking " + frame
+}
+
+func mouseTempResetCmd() tea.Cmd {
+	return tea.Tick(1500*time.Millisecond, func(time.Time) tea.Msg {
+		return mouseTempResetMsg{}
+	})
 }
 
 func (m *tuiModel) renderAgentsModal(width, height int) string {
