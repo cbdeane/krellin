@@ -718,7 +718,10 @@ func (m *tuiModel) renderOutput(width, height int) string {
 	m.outputVP.SetWidth(width)
 	m.outputVP.SetHeight(height)
 	if m.showLogo && len(m.terminal) == 0 {
-		m.outputVP.SetContent(strings.Join(logoLines(), "\n"))
+		lines := logoLines()
+		contentWidth := maxInt(1, width-2)
+		contentHeight := maxInt(1, height-2)
+		m.outputVP.SetContent(centerBlock(lines, contentWidth, contentHeight))
 	} else {
 		m.outputVP.SetContent(strings.Join(m.terminal, "\n"))
 		m.outputVP.GotoBottom()
@@ -1112,7 +1115,7 @@ func defaultLocalRunner(cmd string) (string, error) {
 }
 
 func logoLines() []string {
-	return []string{
+	lines := []string{
 		"██╗  ██╗██████╗ ███████╗██╗     ██╗     ██╗███╗   ██╗",
 		"██║ ██╔╝██╔══██╗██╔════╝██║     ██║     ██║████╗  ██║",
 		"█████╔╝ ██████╔╝█████╗  ██║     ██║     ██║██╔██╗ ██║",
@@ -1120,6 +1123,52 @@ func logoLines() []string {
 		"██║  ██╗██║  ██║███████╗███████╗███████╗██║██║ ╚████║",
 		"╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝╚═╝╚═╝  ╚═══╝",
 		"",
-		"Local capsules. Serialized actions. No git automation.",
 	}
+	subtitle := "Sandboxed capsules to keep your system safe."
+	width := maxLineWidth(lines)
+	lines = append(lines, centerLine(subtitle, width))
+	return lines
+}
+
+func maxLineWidth(lines []string) int {
+	max := 0
+	for _, line := range lines {
+		if w := len([]rune(line)); w > max {
+			max = w
+		}
+	}
+	return max
+}
+
+func centerLine(line string, width int) string {
+	if width <= 0 {
+		return line
+	}
+	w := len([]rune(line))
+	if w >= width {
+		return line
+	}
+	pad := (width - w) / 2
+	return strings.Repeat(" ", pad) + line
+}
+
+func centerBlock(lines []string, width, height int) string {
+	if len(lines) == 0 {
+		return ""
+	}
+	for i, line := range lines {
+		lines[i] = centerLine(line, width)
+	}
+	topPad := 0
+	if height > len(lines) {
+		topPad = (height - len(lines)) / 2
+	}
+	if topPad > 0 {
+		pad := make([]string, 0, topPad+len(lines))
+		for i := 0; i < topPad; i++ {
+			pad = append(pad, "")
+		}
+		lines = append(pad, lines...)
+	}
+	return strings.Join(lines, "\n")
 }
