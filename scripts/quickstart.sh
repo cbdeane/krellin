@@ -40,9 +40,9 @@ pkill -f "krellind -sock $SOCK" >/dev/null 2>&1 || true
 rm -f "$SOCK"
 
 if [[ ! -S "$SOCK" ]]; then
-  "$ROOT/krellind" -sock "$SOCK" >/tmp/krellind.log 2>&1 &
+  (cd "$ROOT" && "$ROOT/krellind" -sock "$SOCK" >/tmp/krellind.log 2>&1 &)
   sleep 0.5
 fi
 
 say "Launching TUI..."
-"$ROOT/krellin" -sock "$SOCK"
+(cd "$ROOT" && "$ROOT/krellin" -sock "$SOCK")
