@@ -42,27 +42,28 @@ type toolResult struct {
 	Error    string
 }
 
-func (h SessionHandler) runAgentWithTools(ctx context.Context, action protocol.Action, provider agents.Provider, content string) error {
+func (h SessionHandler) runAgentWithTools(ctx context.Context, action protocol.Action, provider agents.Provider, content string) (string, error) {
 	results := []toolResult{}
 	for round := 0; round < toolMaxRounds; round++ {
 		prompt := buildToolPrompt(content, results)
 		resp, err := h.Session.agentsRunner.Prompt(ctx, provider, prompt)
 		if err != nil {
-			return h.emitAgentMessage(action, fmt.Sprintf("Agent error: %v", err))
+			return "", h.emitAgentMessage(action, fmt.Sprintf("Agent error: %v", err))
 		}
 		toolCalls, final, ok := parseToolResponse(resp)
 		if final != "" {
-			return h.emitAgentMessage(action, final)
+			return final, h.emitAgentMessage(action, final)
 		}
 		if !ok || len(toolCalls) == 0 {
-			return h.emitAgentMessage(action, resp)
+			return resp, h.emitAgentMessage(action, resp)
 		}
 		for _, call := range toolCalls {
 			res := h.executeTool(ctx, action, call)
 			results = append(results, res)
 		}
 	}
-	return h.emitAgentMessage(action, "Agent exceeded tool call limit.")
+	limitMsg := "Agent exceeded tool call limit."
+	return limitMsg, h.emitAgentMessage(action, limitMsg)
 }
 
 func buildToolPrompt(userContent string, results []toolResult) string {
@@ -108,7 +109,7 @@ func buildToolPrompt(userContent string, results []toolResult) string {
 }
 
 func parseToolResponse(resp string) ([]toolCall, string, bool) {
-	resp = strings.TrimSpace(resp)
+	resp = normalizeAgentResponse(resp)
 	if resp == "" {
 		return nil, "", false
 	}
@@ -134,10 +135,52 @@ func parseToolResponse(resp string) ([]toolCall, string, bool) {
 					return []toolCall{{Tool: k, Args: v}}, "", true
 				}
 			}
+			if raw, ok := single["final"]; ok {
+				var final string
+				if err := json.Unmarshal(raw, &final); err == nil && final != "" {
+					return nil, final, true
+				}
+			}
 		}
 		return nil, "", false
 	}
+	// Fallback: try to extract a "final" field if JSON parse failed.
+	if strings.Contains(resp, "\"final\"") {
+		var anyMap map[string]any
+		if decodeFirstJSON(resp, &anyMap) {
+			if v, ok := anyMap["final"]; ok {
+				if s, ok := v.(string); ok && s != "" {
+					return nil, s, true
+				}
+			}
+		}
+	}
 	return nil, "", false
+}
+
+func normalizeAgentResponse(resp string) string {
+	resp = strings.TrimSpace(resp)
+	if resp == "" {
+		return resp
+	}
+	// Strip fenced code blocks like ```json ... ```
+	if strings.HasPrefix(resp, "```") {
+		resp = strings.TrimPrefix(resp, "```")
+		resp = strings.TrimPrefix(resp, "json")
+		resp = strings.TrimPrefix(resp, "JSON")
+		resp = strings.TrimSpace(resp)
+		if idx := strings.LastIndex(resp, "```"); idx != -1 {
+			resp = resp[:idx]
+		}
+		resp = strings.TrimSpace(resp)
+	}
+	// If it looks like a bare "final":"..." pair, wrap it.
+	if strings.HasPrefix(resp, "\"final\"") || strings.HasPrefix(resp, "final") {
+		if !strings.HasPrefix(resp, "{") {
+			resp = "{" + resp + "}"
+		}
+	}
+	return resp
 }
 
 func decodeFirstJSON(text string, dst any) bool {
@@ -158,6 +201,7 @@ func (h SessionHandler) executeTool(ctx context.Context, action protocol.Action,
 	res := toolResult{Tool: call.Tool, Args: string(call.Args)}
 	if h.Session == nil || h.Session.capsule == nil {
 		res.Error = "capsule not configured"
+		h.recordToolResult(res)
 		h.emitToolOutput(action, res)
 		return res
 	}
@@ -177,8 +221,7 @@ func (h SessionHandler) executeTool(ctx context.Context, action protocol.Action,
 		}
 		cwd, err := workspacePath(args.Cwd)
 		if err != nil {
-			res.Error = err.Error()
-			return res
+			cwd = "/workspace"
 		}
 		r, err := h.Session.capsule.Exec(ctx, h.Session.handle, args.Command, capsule.ExecOptions{Cwd: cwd, Env: args.Env})
 		res.Output = truncateOutput(r.Output)
@@ -186,6 +229,7 @@ func (h SessionHandler) executeTool(ctx context.Context, action protocol.Action,
 		if err != nil {
 			res.Error = err.Error()
 		}
+		h.recordToolResult(res)
 		h.emitToolOutput(action, res)
 		return res
 	case "read_file":
@@ -208,6 +252,7 @@ func (h SessionHandler) executeTool(ctx context.Context, action protocol.Action,
 		if err != nil {
 			res.Error = err.Error()
 		}
+		h.recordToolResult(res)
 		h.emitToolOutput(action, res)
 		return res
 	case "write_file":
@@ -239,6 +284,7 @@ func (h SessionHandler) executeTool(ctx context.Context, action protocol.Action,
 		if err != nil {
 			res.Error = err.Error()
 		}
+		h.recordToolResult(res)
 		h.emitToolOutput(action, res)
 		return res
 	case "list_files":
@@ -272,6 +318,7 @@ func (h SessionHandler) executeTool(ctx context.Context, action protocol.Action,
 		if err != nil {
 			res.Error = err.Error()
 		}
+		h.recordToolResult(res)
 		h.emitToolOutput(action, res)
 		return res
 	case "search":
@@ -302,6 +349,7 @@ func (h SessionHandler) executeTool(ctx context.Context, action protocol.Action,
 		if err != nil {
 			res.Error = err.Error()
 		}
+		h.recordToolResult(res)
 		h.emitToolOutput(action, res)
 		return res
 	case "apply_patch":
@@ -321,13 +369,38 @@ func (h SessionHandler) executeTool(ctx context.Context, action protocol.Action,
 		if err != nil {
 			res.Error = err.Error()
 		}
+		h.recordToolResult(res)
 		h.emitToolOutput(action, res)
 		return res
 	default:
 		res.Error = "unsupported tool"
-		h.emitToolOutput(action, res)
 		return res
 	}
+}
+
+func (h SessionHandler) recordToolResult(res toolResult) {
+	if h.Session == nil {
+		return
+	}
+	h.Session.AddToolResult(toolResultSummary(res))
+}
+
+func toolResultSummary(res toolResult) string {
+	out := res.Output
+	if len(out) > 200 {
+		out = out[:200] + "…"
+	}
+	err := res.Error
+	if len(err) > 200 {
+		err = err[:200] + "…"
+	}
+	if err != "" {
+		return fmt.Sprintf("%s exit=%d error=%s", res.Tool, res.ExitCode, err)
+	}
+	if strings.TrimSpace(out) != "" {
+		return fmt.Sprintf("%s exit=%d output=%s", res.Tool, res.ExitCode, strings.TrimSpace(out))
+	}
+	return fmt.Sprintf("%s exit=%d", res.Tool, res.ExitCode)
 }
 
 func workspacePath(p string) (string, error) {
@@ -364,20 +437,10 @@ func (h SessionHandler) emitToolOutput(action protocol.Action, res toolResult) {
 	if h.Session == nil {
 		return
 	}
-	var out strings.Builder
-	out.WriteString(fmt.Sprintf("[tool %s exit=%d]\n", res.Tool, res.ExitCode))
-	if res.Error != "" {
-		out.WriteString("error: " + res.Error + "\n")
-	}
-	if res.Output != "" {
-		out.WriteString(res.Output)
-		if !strings.HasSuffix(res.Output, "\n") {
-			out.WriteString("\n")
-		}
-	}
+	out := formatToolBlock(res)
 	payload, _ := protocol.MarshalPayload(protocol.TerminalOutputPayload{
 		Stream: "stdout",
-		Data:   out.String(),
+		Data:   out,
 	})
 	h.Session.Emit(protocol.Event{
 		EventID:   "tool-output",
@@ -388,6 +451,82 @@ func (h SessionHandler) emitToolOutput(action protocol.Action, res toolResult) {
 		AgentID:   action.AgentID,
 		Payload:   payload,
 	})
+}
+
+func formatToolBlock(res toolResult) string {
+	var out strings.Builder
+	header := toolHeader(res)
+	if header == "" {
+		return ""
+	}
+	out.WriteString("\n")
+	out.WriteString(header)
+	out.WriteString("\n\n")
+	if res.Error != "" {
+		out.WriteString("  error: " + res.Error + "\n")
+	}
+	if strings.TrimSpace(res.Output) != "" {
+		for _, line := range strings.Split(res.Output, "\n") {
+			if line == "" {
+				out.WriteString("  \n")
+				continue
+			}
+			out.WriteString("  " + line + "\n")
+		}
+	}
+	return out.String()
+}
+
+func toolHeader(res toolResult) string {
+	switch res.Tool {
+	case "shell":
+		var args struct {
+			Command string            `json:"command"`
+			Cwd     string            `json:"cwd,omitempty"`
+			Env     map[string]string `json:"env,omitempty"`
+		}
+		if err := json.Unmarshal([]byte(res.Args), &args); err == nil && strings.TrimSpace(args.Command) != "" {
+			if args.Cwd != "" {
+				return fmt.Sprintf("◆ run %s  (cwd: %s)", args.Command, args.Cwd)
+			}
+			return fmt.Sprintf("◆ run %s", args.Command)
+		}
+		return "◆ run shell command"
+	case "read_file":
+		var args struct {
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal([]byte(res.Args), &args); err == nil && args.Path != "" {
+			return fmt.Sprintf("◆ read %s", args.Path)
+		}
+		return "◆ read file"
+	case "write_file":
+		var args struct {
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal([]byte(res.Args), &args); err == nil && args.Path != "" {
+			return fmt.Sprintf("◆ write %s", args.Path)
+		}
+		return "◆ write file"
+	case "list_files":
+		return "◆ list files"
+	case "search":
+		var args struct {
+			Pattern string `json:"pattern"`
+			Path    string `json:"path,omitempty"`
+		}
+		if err := json.Unmarshal([]byte(res.Args), &args); err == nil && args.Pattern != "" {
+			if args.Path != "" {
+				return fmt.Sprintf("◆ search %q in %s", args.Pattern, args.Path)
+			}
+			return fmt.Sprintf("◆ search %q", args.Pattern)
+		}
+		return "◆ search"
+	case "apply_patch":
+		return "◆ apply patch"
+	default:
+		return ""
+	}
 }
 
 func pickDelimiter(content string) string {

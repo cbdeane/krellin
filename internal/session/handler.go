@@ -362,7 +362,17 @@ func (h SessionHandler) handleAgentPrompt(ctx context.Context, action protocol.A
 			provider.APIKey = key
 		}
 	}
-	return h.runAgentWithTools(ctx, action, provider, content)
+	prompt := buildAgentPrompt(h.Session, content)
+	resp, err := h.runAgentWithTools(ctx, action, provider, prompt)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(resp) == "" {
+		return h.emitAgentMessage(action, "Agent returned empty response.")
+	}
+	h.Session.AddChatTurn("user", content)
+	h.Session.AddChatTurn("assistant", resp)
+	return nil
 }
 
 func (h SessionHandler) emitAgentMessage(action protocol.Action, content string) error {

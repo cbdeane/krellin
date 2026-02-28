@@ -101,6 +101,9 @@ type Session struct {
 	agentsChecker   AgentsChecker
 	agentsRunner    AgentsRunner
 	agentsSecrets   AgentsSecretsStore
+	contextMu       sync.Mutex
+	chatHistory     []chatTurn
+	toolSummaries   []string
 }
 
 func New(opts Options) *Session {

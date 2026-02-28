@@ -81,7 +81,7 @@ type tuiModel struct {
 
 func newTUIModel(c client.Client, sessionID, agentID string) *tuiModel {
 	ti := textinput.New()
-	ti.Prompt = "> "
+	ti.Prompt = "› "
 	ti.Placeholder = "Type a command, !command, or /agents"
 	ti.Focus()
 	ti.CharLimit = 512
@@ -292,9 +292,10 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.ready = true
 			}
 			if isAgentPrompt(line) {
-				m.appendTerminalLine("[you] " + line)
+				m.appendChat("you", line)
 				m.thinking = true
 				m.pendingAgent = true
+				m.updateOutput()
 				return m, tea.Batch(m.dispatchInputCmd(line), thinkTickCmd())
 			}
 			return m, m.dispatchInputCmd(line)
@@ -578,7 +579,7 @@ func (m *tuiModel) applyEvent(ev protocol.Event) {
 	case protocol.EventAgentMessage:
 		var payload protocol.AgentMessagePayload
 		if err := json.Unmarshal(ev.Payload, &payload); err == nil {
-			m.appendTerminalLine("[agent] " + payload.Content)
+			m.appendChat("agent", payload.Content)
 		}
 		if m.pendingAgent {
 			m.thinking = false
@@ -632,6 +633,33 @@ func (m *tuiModel) appendTerminalLine(line string) {
 	m.terminal = append(m.terminal, line)
 	m.terminal = clampLines(m.terminal, 1000)
 	m.updateOutput()
+}
+
+func (m *tuiModel) appendChat(role, content string) {
+	line := formatChat(role, content)
+	if len(m.terminal) > 0 && m.terminal[len(m.terminal)-1] != "" {
+		m.terminal = append(m.terminal, "")
+	}
+	m.appendTerminalLine(line)
+}
+
+func formatChat(role, content string) string {
+	if strings.TrimSpace(content) == "" {
+		return ""
+	}
+	roleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F4D06F"))
+	tag := "›"
+	switch strings.ToLower(role) {
+	case "agent":
+		tag = "◆"
+		roleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#9AD1D4"))
+	case "system":
+		tag = "•"
+		roleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#B0B3B8"))
+	}
+	label := roleStyle.Render(tag)
+	content = strings.ReplaceAll(content, "\n", " ")
+	return label + " " + content
 }
 
 func sanitizeTerminal(data string) string {
@@ -697,7 +725,12 @@ func (m *tuiModel) updateOutput() {
 	if m.outputVP.Width() <= 0 {
 		return
 	}
-	m.outputVP.SetContent(strings.Join(m.terminal, "\n"))
+	lines := append([]string{}, m.terminal...)
+	if m.thinking {
+		lines = append(lines, "")
+		lines = append(lines, m.thinkingOutputLine())
+	}
+	m.outputVP.SetContent(strings.Join(lines, "\n"))
 	m.outputVP.GotoBottom()
 	m.inputVP.SetContent(m.input.View() + "\n" + m.thinkingLine())
 }
@@ -723,7 +756,12 @@ func (m *tuiModel) renderOutput(width, height int) string {
 		contentHeight := maxInt(1, height-2)
 		m.outputVP.SetContent(centerBlock(lines, contentWidth, contentHeight))
 	} else {
-		m.outputVP.SetContent(strings.Join(m.terminal, "\n"))
+		lines := append([]string{}, m.terminal...)
+		if m.thinking {
+			lines = append(lines, "")
+			lines = append(lines, m.thinkingOutputLine())
+		}
+		m.outputVP.SetContent(strings.Join(lines, "\n"))
 		m.outputVP.GotoBottom()
 	}
 	return m.outputVP.View()
@@ -762,6 +800,12 @@ func (m *tuiModel) thinkingLine() string {
 	}
 	frame := thinkFrames[m.thinkFrame%len(thinkFrames)]
 	return fmt.Sprintf("λ agent %s waiting for response…", frame)
+}
+
+func (m *tuiModel) thinkingOutputLine() string {
+	frame := thinkFrames[m.thinkFrame%len(thinkFrames)]
+	style := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#9AD1D4"))
+	return style.Render("◆") + " " + "thinking " + frame
 }
 
 func (m *tuiModel) renderAgentsModal(width, height int) string {
