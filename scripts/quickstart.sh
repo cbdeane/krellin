@@ -45,4 +45,8 @@ if [[ ! -S "$SOCK" ]]; then
 fi
 
 say "Launching TUI..."
-(cd "$ROOT" && "$ROOT/krellin" -sock "$SOCK" -repo "$ROOT")
+if [[ -t 0 && -t 1 ]]; then
+  (cd "$ROOT" && "$ROOT/krellin" -sock "$SOCK" -repo "$ROOT")
+else
+  (cd "$ROOT" && "$ROOT/krellin" -sock "$SOCK" -repo "$ROOT" </dev/tty >/dev/tty 2>&1)
+fi
