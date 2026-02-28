@@ -40,3 +40,8 @@ prompt.md
 
 # Repo-local config
 .krellinrc
+
+# Nix files
+.envrc
+flake.nix
+flake.lock
