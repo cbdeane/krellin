@@ -22,6 +22,7 @@ type Config struct {
 	RepoID      string
 	RepoRoot    string
 	ImageDigest string
+	User        string
 	NetworkOn   bool
 	CPUs        int
 	MemoryMB    int

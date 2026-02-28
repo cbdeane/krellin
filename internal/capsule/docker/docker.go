@@ -38,11 +38,40 @@ func (c *Capsule) Ensure(ctx context.Context, cfg capsule.Config) (capsule.Handl
 		return capsule.Handle{}, err
 	}
 	if strings.TrimSpace(existing) != "" {
-		runningOut, err := c.runner.Run(ctx, "docker", "inspect", "-f", "{{.State.Running}}", name)
+		statusOut, err := c.runner.Run(ctx, "docker", "inspect", "-f", "{{.State.Running}}|{{.Config.Image}}", name)
 		if err != nil {
 			return capsule.Handle{}, err
 		}
-		if strings.TrimSpace(runningOut) != "true" {
+		parts := strings.SplitN(strings.TrimSpace(statusOut), "|", 2)
+		running := ""
+		image := ""
+		if len(parts) > 0 {
+			running = parts[0]
+		}
+		if len(parts) > 1 {
+			image = parts[1]
+		}
+		if image != "" && cfg.ImageDigest != "" && image != cfg.ImageDigest {
+			if _, err := c.runner.Run(ctx, "docker", "stop", name); err != nil {
+				return capsule.Handle{}, err
+			}
+			if _, err := c.runner.Run(ctx, "docker", "rm", "-f", name); err != nil {
+				return capsule.Handle{}, err
+			}
+			if _, err := c.runner.Run(ctx, buildCreateArgs(cfg, name)...); err != nil {
+				if pullErr := c.pullImage(ctx, cfg.ImageDigest); pullErr != nil {
+					return capsule.Handle{}, fmt.Errorf("create failed: %w (pull failed: %v)", err, pullErr)
+				}
+				if _, retryErr := c.runner.Run(ctx, buildCreateArgs(cfg, name)...); retryErr != nil {
+					return capsule.Handle{}, retryErr
+				}
+			}
+			if _, err := c.runner.Run(ctx, "docker", "start", name); err != nil {
+				return capsule.Handle{}, err
+			}
+			return capsule.Handle{ID: name, RepoID: cfg.RepoID, RepoRoot: cfg.RepoRoot}, nil
+		}
+		if strings.TrimSpace(running) != "true" {
 			if _, err := c.runner.Run(ctx, "docker", "start", name); err != nil {
 				return capsule.Handle{}, err
 			}
@@ -183,13 +212,18 @@ func containerName(repoID string) string {
 
 func buildCreateArgs(cfg capsule.Config, name string) []string {
 	args := []string{"docker", "create", "--name", name}
-	args = append(args, "--cap-drop=ALL")
-	args = append(args, "--security-opt", "no-new-privileges")
+	if strings.TrimSpace(cfg.User) != "root" {
+		args = append(args, "--cap-drop=ALL")
+		args = append(args, "--security-opt", "no-new-privileges")
+	}
 	args = append(args, "-w", "/workspace")
 	args = append(args, "-e", "HOME=/home/dev")
 	args = append(args, "--label", fmt.Sprintf("krellin.repo_id=%s", cfg.RepoID))
 	args = append(args, "--label", fmt.Sprintf("krellin.repo_root=%s", cfg.RepoRoot))
 	args = append(args, "--label", "krellin.kind=capsule")
+	if strings.TrimSpace(cfg.User) != "" {
+		args = append(args, "--user", cfg.User)
+	}
 	if cfg.CreatedAt != "" {
 		args = append(args, "--label", fmt.Sprintf("krellin.created_at=%s", cfg.CreatedAt))
 	}

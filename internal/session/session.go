@@ -39,6 +39,7 @@ type Options struct {
 	AgentsChecker   AgentsChecker
 	AgentsRunner    AgentsRunner
 	AgentsSecrets   AgentsSecretsStore
+	CapsuleUser     string
 }
 
 type AgentsStore interface {
@@ -80,6 +81,7 @@ type Session struct {
 	lastErrorEvent  *protocol.Event
 	capsule         capsule.Capsule
 	policy          policy.Policy
+	capsuleUser     string
 	imageDigest     string
 	networkOn       bool
 	cpus            int
@@ -128,6 +130,7 @@ func New(opts Options) *Session {
 		agentsChecker:   opts.AgentsChecker,
 		agentsRunner:    opts.AgentsRunner,
 		agentsSecrets:   opts.AgentsSecrets,
+		capsuleUser:     opts.CapsuleUser,
 	}
 	handler := opts.Handler
 	if handler == nil {
@@ -153,6 +156,7 @@ func (s *Session) Start(ctx context.Context) {
 				RepoID:      strings.TrimPrefix(s.capsuleName, "krellin-"),
 				RepoRoot:    s.repoRoot,
 				ImageDigest: s.imageDigest,
+				User:        s.capsuleUser,
 				NetworkOn:   s.networkOn,
 				CPUs:        s.cpus,
 				MemoryMB:    s.memoryMB,

@@ -39,6 +39,7 @@ type Config struct {
 type CapsuleConfig struct {
 	Image string `toml:"image"`
 	Name  string `toml:"name,omitempty"`
+	User  string `toml:"user,omitempty"`
 }
 
 type PolicyConfig struct {
@@ -104,6 +105,11 @@ func Validate(cfg Config) error {
 	}
 	if cfg.Resources.CPUs < 0 || cfg.Resources.MemoryMB < 0 {
 		return errors.New("resources values must be non-negative")
+	}
+	if cfg.Capsule.User != "" {
+		if strings.TrimSpace(cfg.Capsule.User) == "" {
+			return errors.New("capsule.user must be non-empty when set")
+		}
 	}
 	if cfg.Freeze.Mode != "" && cfg.Freeze.Mode != FreezeModeClean && cfg.Freeze.Mode != FreezeModeAsIs {
 		return fmt.Errorf("invalid freeze.mode: %q", cfg.Freeze.Mode)

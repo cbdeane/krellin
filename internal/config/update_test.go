@@ -9,7 +9,7 @@ import (
 func TestUpdateImageDigest(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".krellinrc")
-	cfg := Config{Version: 1, Capsule: CapsuleConfig{Image: "repo@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}}
+	cfg := Config{Version: 1, Capsule: CapsuleConfig{Image: "repo@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", User: "root"}}
 	if err := Write(path, cfg); err != nil {
 		t.Fatalf("write: %v", err)
 	}

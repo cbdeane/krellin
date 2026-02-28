@@ -10,6 +10,8 @@ const sampleTOML = `version = 1
 
 [capsule]
 image = "ghcr.io/krellin/capsules/debian@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+user = "root"
+user = "root"
 
 [policy]
 network = "on"
@@ -48,7 +50,7 @@ image = "ghcr.io/krellin/capsules/debian@sha256:0123456789abcdef0123456789abcdef
 func TestValidateDigestPinned(t *testing.T) {
 	cfg := Config{
 		Version: 1,
-		Capsule: CapsuleConfig{Image: "ghcr.io/krellin/capsules/debian:latest"},
+		Capsule: CapsuleConfig{Image: "ghcr.io/krellin/capsules/debian:latest", User: "root"},
 	}
 	if err := Validate(cfg); err == nil {
 		t.Fatalf("expected error for non-digest image")
@@ -78,7 +80,7 @@ func TestWriteReadRoundTrip(t *testing.T) {
 		t.Fatalf("parse written: %v", err)
 	}
 
-	if loaded.Capsule.Image != cfg.Capsule.Image || loaded.Version != cfg.Version {
+	if loaded.Capsule.Image != cfg.Capsule.Image || loaded.Capsule.User != cfg.Capsule.User || loaded.Version != cfg.Version {
 		t.Fatalf("round trip mismatch: %+v vs %+v", loaded, cfg)
 	}
 }

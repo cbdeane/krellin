@@ -81,8 +81,8 @@ func TestEnsureCreatesWhenMissing(t *testing.T) {
 func TestEnsureUsesExistingContainer(t *testing.T) {
 	fr := &fakeRunner{
 		outputs: map[string]string{
-			"docker ps -a --filter name=krellin-repo1 --format {{.ID}}": "abc123",
-			"docker inspect -f {{.State.Running}} krellin-repo1":        "true",
+			"docker ps -a --filter name=krellin-repo1 --format {{.ID}}":            "abc123",
+			"docker inspect -f {{.State.Running}}|{{.Config.Image}} krellin-repo1": "true|img@sha256:abc",
 		},
 	}
 	c := New(fr)
@@ -99,8 +99,8 @@ func TestEnsureUsesExistingContainer(t *testing.T) {
 func TestEnsureStartsWhenStopped(t *testing.T) {
 	fr := &fakeRunner{
 		outputs: map[string]string{
-			"docker ps -a --filter name=krellin-repo1 --format {{.ID}}": "abc123",
-			"docker inspect -f {{.State.Running}} krellin-repo1":        "false",
+			"docker ps -a --filter name=krellin-repo1 --format {{.ID}}":            "abc123",
+			"docker inspect -f {{.State.Running}}|{{.Config.Image}} krellin-repo1": "false|img@sha256:abc",
 		},
 	}
 	c := New(fr)
@@ -118,6 +118,37 @@ func TestEnsureStartsWhenStopped(t *testing.T) {
 	}
 	if !foundStart {
 		t.Fatalf("expected docker start when container stopped")
+	}
+}
+
+func TestEnsureRecreatesOnImageMismatch(t *testing.T) {
+	cfg := capsule.Config{
+		RepoID:      "repo1",
+		RepoRoot:    "/repo",
+		ImageDigest: "new@sha256:abc",
+		NetworkOn:   true,
+	}
+	createArgs := joinArgs(buildCreateArgs(cfg, "krellin-repo1"))
+	fr := &fakeRunner{
+		outputs: map[string]string{
+			"docker ps -a --filter name=krellin-repo1 --format {{.ID}}":            "abc123",
+			"docker inspect -f {{.State.Running}}|{{.Config.Image}} krellin-repo1": "true|old@sha256:deadbeef",
+		},
+	}
+	c := New(fr)
+	_, err := c.Ensure(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	foundCreate := false
+	for _, call := range fr.calls {
+		if joinArgs(call.args) == createArgs {
+			foundCreate = true
+			break
+		}
+	}
+	if !foundCreate {
+		t.Fatalf("expected container recreate on image mismatch")
 	}
 }
 

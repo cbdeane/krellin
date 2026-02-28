@@ -126,6 +126,15 @@ func parseToolResponse(resp string) ([]toolCall, string, bool) {
 		if env.Tool != "" {
 			return []toolCall{{Tool: env.Tool, Args: env.Args}}, "", true
 		}
+		// Support {"shell":{...}} style.
+		var single map[string]json.RawMessage
+		if decodeFirstJSON(resp, &single) {
+			if len(single) == 1 {
+				for k, v := range single {
+					return []toolCall{{Tool: k, Args: v}}, "", true
+				}
+			}
+		}
 		return nil, "", false
 	}
 	return nil, "", false

@@ -607,6 +607,7 @@ func (m *tuiModel) appendTerminal(data string) {
 	if data == "" {
 		return
 	}
+	data = sanitizeTerminal(data)
 	trimmed := strings.TrimLeft(data, "\n")
 	if strings.HasPrefix(trimmed, "[tool ") && len(m.terminal) > 0 && m.terminal[len(m.terminal)-1] != "" {
 		data = "\n" + data
@@ -631,6 +632,25 @@ func (m *tuiModel) appendTerminalLine(line string) {
 	m.terminal = append(m.terminal, line)
 	m.terminal = clampLines(m.terminal, 1000)
 	m.updateOutput()
+}
+
+func sanitizeTerminal(data string) string {
+	if data == "" {
+		return data
+	}
+	data = strings.ReplaceAll(data, "\r", "\n")
+	out := make([]rune, 0, len(data))
+	for _, r := range data {
+		if r == '\n' || r == '\t' {
+			out = append(out, r)
+			continue
+		}
+		if r < 32 || r == 127 {
+			continue
+		}
+		out = append(out, r)
+	}
+	return string(out)
 }
 
 func (m *tuiModel) appendActionLog(entry string) {

@@ -4,7 +4,7 @@ package config
 func DefaultConfig(imageDigest string) Config {
 	cfg := Config{
 		Version: 1,
-		Capsule: CapsuleConfig{Image: imageDigest},
+		Capsule: CapsuleConfig{Image: imageDigest, User: "root"},
 		Policy:  PolicyConfig{Network: NetworkOn},
 		Resources: ResourcesConfig{
 			CPUs:     DefaultCPUs,

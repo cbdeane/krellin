@@ -10,6 +10,9 @@ version = 1
 [capsule]
 # Must be a digest-pinned image reference.
 image = "ghcr.io/krellin/capsules/debian@sha256:..."
+# Optional: run as a specific user (e.g. "root" for unrestricted installs).
+# When set to "root", Krellin skips cap-drop/no-new-privileges so package installs work.
+user = "root"
 
 [policy]
 network = "on" # on | off

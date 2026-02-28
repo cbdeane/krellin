@@ -66,6 +66,7 @@ func BuildSession(ctx context.Context, repoRoot string) (*session.Session, error
 		Capsule:         caps,
 		Policy:          pol,
 		ImageDigest:     cfg.Capsule.Image,
+		CapsuleUser:     cfg.Capsule.User,
 		NetworkOn:       cfg.Policy.Network == config.NetworkOn,
 		CPUs:            cfg.Resources.CPUs,
 		MemoryMB:        cfg.Resources.MemoryMB,
