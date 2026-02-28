@@ -68,9 +68,64 @@ func buildAgentPrompt(s *Session, userContent string) string {
 		}
 		out.WriteString("\n")
 	}
+	out.WriteString("Tool availability:\n")
+	out.WriteString("- You can use tools to read/write files and run shell commands inside the capsule.\n")
+	out.WriteString("- For any file or system changes, you must call tools rather than describing actions.\n\n")
 	out.WriteString("User:\n")
 	out.WriteString(userContent)
 	return out.String()
+}
+
+func requiresTools(userContent string) bool {
+	lower := strings.ToLower(userContent)
+	verbs := []string{"write", "create", "edit", "modify", "update", "delete", "rename", "read", "open", "cat", "diff", "patch", "apply patch"}
+	objects := []string{"file", "directory", "folder", ".md", ".txt", ".go", ".js", ".ts", ".py", ".json", ".yaml", ".yml"}
+	verbHit := false
+	for _, v := range verbs {
+		if strings.Contains(lower, v) {
+			verbHit = true
+			break
+		}
+	}
+	if !verbHit {
+		return false
+	}
+	for _, o := range objects {
+		if strings.Contains(lower, o) {
+			return true
+		}
+	}
+	return false
+}
+
+func requiresWrite(userContent string) bool {
+	lower := strings.ToLower(userContent)
+	verbs := []string{"write", "create", "edit", "modify", "update", "delete", "rename", "patch", "apply patch", "add", "append", "extend", "expand", "continue", "insert", "replace", "change", "fix"}
+	objects := []string{"file", "directory", "folder", ".md", ".txt", ".go", ".js", ".ts", ".py", ".json", ".yaml", ".yml"}
+	verbHit := false
+	for _, v := range verbs {
+		if strings.Contains(lower, v) {
+			verbHit = true
+			break
+		}
+	}
+	if !verbHit {
+		return false
+	}
+	for _, o := range objects {
+		if strings.Contains(lower, o) {
+			return true
+		}
+	}
+	return false
+}
+
+func requiresMultiStep(userContent string) bool {
+	lower := strings.ToLower(userContent)
+	if strings.Contains(lower, " and then ") || strings.Contains(lower, " then ") {
+		return true
+	}
+	return false
 }
 
 func workspacePreamble(s *Session) string {

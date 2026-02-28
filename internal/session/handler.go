@@ -363,7 +363,7 @@ func (h SessionHandler) handleAgentPrompt(ctx context.Context, action protocol.A
 		}
 	}
 	prompt := buildAgentPrompt(h.Session, content)
-	resp, err := h.runAgentWithTools(ctx, action, provider, prompt)
+	resp, err := h.runAgentWithTools(ctx, action, provider, prompt, requiresTools(content), requiresWrite(content), requiresMultiStep(content))
 	if err != nil {
 		return err
 	}

@@ -34,6 +34,16 @@ type toolEnvelope struct {
 	Final     string          `json:"final"`
 }
 
+type planEnvelope struct {
+	Steps    []toolCall `json:"steps"`
+	Question string     `json:"question"`
+}
+
+type evalEnvelope struct {
+	Status string `json:"status"`
+	Reason string `json:"reason"`
+}
+
 type toolResult struct {
 	Tool     string
 	Args     string
@@ -42,8 +52,14 @@ type toolResult struct {
 	Error    string
 }
 
-func (h SessionHandler) runAgentWithTools(ctx context.Context, action protocol.Action, provider agents.Provider, content string) (string, error) {
+func (h SessionHandler) runAgentWithTools(ctx context.Context, action protocol.Action, provider agents.Provider, content string, enforceTools bool, enforceWrite bool, enforceMulti bool) (string, error) {
 	results := []toolResult{}
+	baseContent := content
+	if enforceMulti {
+		if final, ok, err := h.runPlanned(ctx, action, provider, baseContent, enforceWrite); ok || err != nil {
+			return final, err
+		}
+	}
 	for round := 0; round < toolMaxRounds; round++ {
 		prompt := buildToolPrompt(content, results)
 		resp, err := h.Session.agentsRunner.Prompt(ctx, provider, prompt)
@@ -52,18 +68,82 @@ func (h SessionHandler) runAgentWithTools(ctx context.Context, action protocol.A
 		}
 		toolCalls, final, ok := parseToolResponse(resp)
 		if final != "" {
+			if enforceTools && !hasAnyToolResult(results) {
+				content = baseContent + "\n\nReminder: You must use tools for this request before responding."
+				continue
+			}
+			if enforceMulti && len(results) < 2 {
+				content = baseContent + "\n\nReminder: The user asked for multiple steps. Complete all steps (use tools as needed) before responding."
+				continue
+			}
+			if enforceWrite && !hasWriteResult(results) {
+				content = baseContent + "\n\nReminder: The user asked for file changes. You must write the updated content via write_file before responding."
+				continue
+			}
 			return final, h.emitAgentMessage(action, final)
 		}
 		if !ok || len(toolCalls) == 0 {
+			if enforceTools {
+				content = baseContent + "\n\nReminder: You must use tools for file or system changes. Respond with JSON tool calls."
+				continue
+			}
 			return resp, h.emitAgentMessage(action, resp)
 		}
 		for _, call := range toolCalls {
+			if enforceWrite && hasReadResult(results) && !hasWriteResult(results) {
+				switch call.Tool {
+				case "write_file", "apply_patch":
+					// allow
+				default:
+					results = append(results, toolResult{
+						Tool:  call.Tool,
+						Args:  string(call.Args),
+						Error: "file already read; next step must be write_file or apply_patch",
+					})
+					continue
+				}
+			}
 			res := h.executeTool(ctx, action, call)
 			results = append(results, res)
+		}
+		if enforceWrite && hasReadResult(results) && !hasWriteResult(results) {
+			if lastTool(results) == "read_file" {
+				content = baseContent + "\n\nReminder: You already read the file. Do not read again. Write the updated content now via write_file."
+			}
 		}
 	}
 	limitMsg := "Agent exceeded tool call limit."
 	return limitMsg, h.emitAgentMessage(action, limitMsg)
+}
+
+func hasWriteResult(results []toolResult) bool {
+	for _, res := range results {
+		switch res.Tool {
+		case "write_file", "apply_patch":
+			return true
+		}
+	}
+	return false
+}
+
+func hasAnyToolResult(results []toolResult) bool {
+	return len(results) > 0
+}
+
+func hasReadResult(results []toolResult) bool {
+	for _, res := range results {
+		if res.Tool == "read_file" {
+			return true
+		}
+	}
+	return false
+}
+
+func lastTool(results []toolResult) string {
+	if len(results) == 0 {
+		return ""
+	}
+	return results[len(results)-1].Tool
 }
 
 func buildToolPrompt(userContent string, results []toolResult) string {
@@ -85,6 +165,15 @@ func buildToolPrompt(userContent string, results []toolResult) string {
 	out.WriteString("Rules:\n")
 	out.WriteString("- Operate only within /workspace.\n")
 	out.WriteString("- Do not use git for edits or revert.\n")
+	out.WriteString("- If asked to read/write/create/modify files, you MUST use tools. Never claim changes without a tool call.\n")
+	out.WriteString("- If the user requests changes after reading a file, you must write the updated content via write_file (do not just acknowledge).\n")
+	out.WriteString("- write_file overwrites the file; when modifying, include the full updated content and preserve existing text unless the user asks for a full replacement.\n")
+	out.WriteString("- After a read, do not call any other tools until you write the update (only write_file or apply_patch).\n")
+	out.WriteString("- If the user asks for multiple steps (e.g., \"and then\"), you must complete all steps before responding.\n")
+	out.WriteString("- If a task fails, try a different approach before reporting failure (e.g., alternate tool, different command, check context).\n")
+	out.WriteString("- Only ask a next-step question after the requested task has been completed.\n")
+	out.WriteString("- Before proposing a next step, summarize what you just did in one short sentence.\n")
+	out.WriteString("- When a task succeeds, propose a likely next step as a short question based on the user's request. If nothing is likely, ask \"What should I do next?\".\n")
 	out.WriteString("- Keep tool output concise.\n\n")
 	out.WriteString("User:\n")
 	out.WriteString(userContent)
@@ -108,6 +197,170 @@ func buildToolPrompt(userContent string, results []toolResult) string {
 	return out.String()
 }
 
+func (h SessionHandler) runPlanned(ctx context.Context, action protocol.Action, provider agents.Provider, content string, enforceWrite bool) (string, bool, error) {
+	const maxPlanAttempts = 2
+	for attempt := 0; attempt < maxPlanAttempts; attempt++ {
+		state, ok := h.Session.getPlan(content)
+		if !ok {
+			planResp, err := h.Session.agentsRunner.Prompt(ctx, provider, buildPlanPrompt(content))
+			if err != nil {
+				return "", false, h.emitAgentMessage(action, fmt.Sprintf("Agent error: %v", err))
+			}
+			steps, question, ok := parsePlanResponse(planResp)
+			if !ok {
+				return "", false, nil
+			}
+			if question != "" {
+				return question, true, h.emitAgentMessage(action, question)
+			}
+			if len(steps) < 2 {
+				return "", false, nil
+			}
+			state = planState{Request: content, Steps: steps, Index: 0}
+			h.Session.setPlan(state)
+		}
+		if state.Index == 0 {
+			h.emitAgentMessage(action, formatPlanSteps(state.Steps))
+		}
+		results := []toolResult{}
+		retries := 0
+		total := len(state.Steps)
+		for state.Index < len(state.Steps) {
+			step := state.Steps[state.Index]
+			res := h.executeTool(ctx, action, step)
+			results = append(results, res)
+			h.emitAgentMessage(action, formatStepResult(state.Index, total, step, res, "ran"))
+			status := "ok"
+			if res.Error != "" || res.ExitCode != 0 {
+				status = h.evaluateStep(ctx, provider, content, step, res)
+			}
+			if status == "retry" && retries < 1 {
+				h.emitAgentMessage(action, formatStepResult(state.Index, total, step, res, "retry"))
+				retries++
+				continue
+			}
+			if status == "replan" {
+				h.emitAgentMessage(action, formatStepResult(state.Index, total, step, res, "replan"))
+				h.Session.clearPlan()
+				break
+			}
+			h.emitAgentMessage(action, formatStepResult(state.Index, total, step, res, "ok"))
+			retries = 0
+			state.Index++
+			h.Session.setPlan(state)
+		}
+		if state.Index >= len(state.Steps) {
+			h.Session.clearPlan()
+			if enforceWrite && !hasWriteResult(results) {
+				msg := "Planned execution completed without a file write, but the user requested file changes."
+				return msg, true, h.emitAgentMessage(action, msg)
+			}
+			finalPrompt := buildFinalPrompt(content, results)
+			finalResp, err := h.Session.agentsRunner.Prompt(ctx, provider, finalPrompt)
+			if err != nil {
+				return "", true, h.emitAgentMessage(action, fmt.Sprintf("Agent error: %v", err))
+			}
+			_, final, ok := parseToolResponse(finalResp)
+			if final == "" || !ok {
+				final = strings.TrimSpace(finalResp)
+			}
+			if final == "" {
+				final = "Completed requested steps."
+			}
+			return final, true, h.emitAgentMessage(action, final)
+		}
+	}
+	return "", false, nil
+}
+
+func buildPlanPrompt(userContent string) string {
+	var out strings.Builder
+	out.WriteString("You are planning a multi-step task for a tool-using coding agent.\n")
+	out.WriteString("Return JSON only.\n\n")
+	out.WriteString("Constraints:\n")
+	out.WriteString("- Output JSON with either {\"steps\":[...]} or {\"question\":\"...\"}.\n")
+	out.WriteString("- Each step must be a tool call with tool + args.\n")
+	out.WriteString("- Use only these tools: shell, read_file, write_file, list_files, search, apply_patch.\n")
+	out.WriteString("- Steps must be in order and cover ALL user requests.\n")
+	out.WriteString("- Do NOT include a final response.\n\n")
+	out.WriteString("Tool call schema:\n")
+	out.WriteString(`{"tool":"shell","args":{"command":"ls","cwd":"/workspace"}}` + "\n")
+	out.WriteString(`{"tool":"read_file","args":{"path":"story.md"}}` + "\n\n")
+	out.WriteString("User request:\n")
+	out.WriteString(userContent)
+	out.WriteString("\nRespond with JSON only.\n")
+	return out.String()
+}
+
+func buildFinalPrompt(userContent string, results []toolResult) string {
+	var out strings.Builder
+	out.WriteString("You executed a planned multi-step task. ")
+	out.WriteString("Provide the final response as JSON only.\n")
+	out.WriteString("Format:\n")
+	out.WriteString("{\"final\":\"<one-sentence summary of what was done. then a likely next-step question, or 'What should I do next?' if none>\"}\n\n")
+	out.WriteString("User request:\n")
+	out.WriteString(userContent)
+	if len(results) > 0 {
+		out.WriteString("\n\nTool results:\n")
+		for i, res := range results {
+			out.WriteString(fmt.Sprintf("%d) tool=%s args=%s exit_code=%d\n", i+1, res.Tool, res.Args, res.ExitCode))
+			if res.Error != "" {
+				out.WriteString("error: " + res.Error + "\n")
+			}
+			if res.Output != "" {
+				out.WriteString("output:\n")
+				out.WriteString(res.Output)
+				if !strings.HasSuffix(res.Output, "\n") {
+					out.WriteString("\n")
+				}
+			}
+		}
+	}
+	out.WriteString("\nRespond with JSON only.\n")
+	return out.String()
+}
+
+func buildEvalPrompt(userContent string, step toolCall, res toolResult) string {
+	var out strings.Builder
+	out.WriteString("Evaluate whether the tool step succeeded. Respond with JSON only.\n")
+	out.WriteString("Format: {\"status\":\"ok\"|\"retry\"|\"replan\",\"reason\":\"...\"}\n\n")
+	out.WriteString("User request:\n")
+	out.WriteString(userContent + "\n\n")
+	out.WriteString("Step:\n")
+	out.WriteString(fmt.Sprintf("tool=%s args=%s\n", step.Tool, strings.TrimSpace(string(step.Args))))
+	out.WriteString("Result:\n")
+	out.WriteString(fmt.Sprintf("exit_code=%d\n", res.ExitCode))
+	if res.Error != "" {
+		out.WriteString("error: " + res.Error + "\n")
+	}
+	if res.Output != "" {
+		out.WriteString("output:\n")
+		out.WriteString(res.Output)
+		if !strings.HasSuffix(res.Output, "\n") {
+			out.WriteString("\n")
+		}
+	}
+	out.WriteString("\nRespond with JSON only.\n")
+	return out.String()
+}
+
+func (h SessionHandler) evaluateStep(ctx context.Context, provider agents.Provider, userContent string, step toolCall, res toolResult) string {
+	prompt := buildEvalPrompt(userContent, step, res)
+	resp, err := h.Session.agentsRunner.Prompt(ctx, provider, prompt)
+	if err != nil {
+		return "ok"
+	}
+	resp = normalizeAgentResponse(resp)
+	var env evalEnvelope
+	if decodeFirstJSON(resp, &env) {
+		switch strings.ToLower(strings.TrimSpace(env.Status)) {
+		case "retry", "replan", "ok":
+			return strings.ToLower(strings.TrimSpace(env.Status))
+		}
+	}
+	return "ok"
+}
+
 func parseToolResponse(resp string) ([]toolCall, string, bool) {
 	resp = normalizeAgentResponse(resp)
 	if resp == "" {
@@ -127,7 +380,7 @@ func parseToolResponse(resp string) ([]toolCall, string, bool) {
 		if env.Tool != "" {
 			return []toolCall{{Tool: env.Tool, Args: env.Args}}, "", true
 		}
-		// Support {"shell":{...}} style.
+		// Support {"shell":{...}} and {"tool":"read_file","path":"..."} styles.
 		var single map[string]json.RawMessage
 		if decodeFirstJSON(resp, &single) {
 			if len(single) == 1 {
@@ -141,8 +394,31 @@ func parseToolResponse(resp string) ([]toolCall, string, bool) {
 					return nil, final, true
 				}
 			}
+			if rawTool, ok := single["tool"]; ok {
+				var tool string
+				if err := json.Unmarshal(rawTool, &tool); err == nil && tool != "" {
+					if rawArgs, ok := single["args"]; ok {
+						return []toolCall{{Tool: tool, Args: rawArgs}}, "", true
+					}
+					argsMap := map[string]json.RawMessage{}
+					for k, v := range single {
+						if k == "tool" || k == "final" {
+							continue
+						}
+						argsMap[k] = v
+					}
+					if len(argsMap) > 0 {
+						if argsBytes, err := json.Marshal(argsMap); err == nil {
+							return []toolCall{{Tool: tool, Args: argsBytes}}, "", true
+						}
+					}
+				}
+			}
 		}
 		return nil, "", false
+	}
+	if jsonObj := extractFirstJSON(resp); jsonObj != "" && jsonObj != resp {
+		return parseToolResponse(jsonObj)
 	}
 	// Fallback: try to extract a "final" field if JSON parse failed.
 	if strings.Contains(resp, "\"final\"") {
@@ -156,6 +432,120 @@ func parseToolResponse(resp string) ([]toolCall, string, bool) {
 		}
 	}
 	return nil, "", false
+}
+
+func parsePlanResponse(resp string) ([]toolCall, string, bool) {
+	resp = normalizeAgentResponse(resp)
+	if resp == "" {
+		return nil, "", false
+	}
+	var env planEnvelope
+	if decodeFirstJSON(resp, &env) {
+		if env.Question != "" {
+			return nil, env.Question, true
+		}
+		if len(env.Steps) > 0 {
+			return env.Steps, "", true
+		}
+	}
+	if jsonObj := extractFirstJSON(resp); jsonObj != "" && jsonObj != resp {
+		return parsePlanResponse(jsonObj)
+	}
+	return nil, "", false
+}
+
+func formatPlanSteps(steps []toolCall) string {
+	if len(steps) == 0 {
+		return ""
+	}
+	var out strings.Builder
+	out.WriteString("Planned steps:\n")
+	for i, step := range steps {
+		label := step.Tool
+		switch step.Tool {
+		case "shell":
+			var args struct {
+				Command string `json:"command"`
+				Cwd     string `json:"cwd,omitempty"`
+			}
+			if err := json.Unmarshal(step.Args, &args); err == nil && strings.TrimSpace(args.Command) != "" {
+				if strings.TrimSpace(args.Cwd) != "" {
+					label = fmt.Sprintf("shell: %s (cwd %s)", strings.TrimSpace(args.Command), strings.TrimSpace(args.Cwd))
+				} else {
+					label = fmt.Sprintf("shell: %s", strings.TrimSpace(args.Command))
+				}
+			} else if step.Args != nil {
+				label = fmt.Sprintf("%s: %s", step.Tool, strings.TrimSpace(string(step.Args)))
+			}
+		case "read_file", "write_file", "list_files", "search", "apply_patch":
+			var args map[string]any
+			if err := json.Unmarshal(step.Args, &args); err == nil {
+				switch step.Tool {
+				case "read_file":
+					if v, ok := args["path"].(string); ok && v != "" {
+						label = fmt.Sprintf("read %s", v)
+					}
+				case "write_file":
+					if v, ok := args["path"].(string); ok && v != "" {
+						label = fmt.Sprintf("write %s", v)
+					}
+				case "list_files":
+					if v, ok := args["path"].(string); ok && v != "" {
+						label = fmt.Sprintf("list %s", v)
+					} else {
+						label = "list files"
+					}
+				case "search":
+					pattern, _ := args["pattern"].(string)
+					path, _ := args["path"].(string)
+					if path != "" {
+						label = fmt.Sprintf("search %s in %s", pattern, path)
+					} else if pattern != "" {
+						label = fmt.Sprintf("search %s", pattern)
+					}
+				case "apply_patch":
+					label = "apply patch"
+				}
+			} else if step.Args != nil {
+				label = fmt.Sprintf("%s: %s", step.Tool, strings.TrimSpace(string(step.Args)))
+			}
+		default:
+			if step.Args != nil {
+				label = fmt.Sprintf("%s: %s", step.Tool, strings.TrimSpace(string(step.Args)))
+			}
+		}
+		out.WriteString(fmt.Sprintf("  %d) %s\n", i+1, label))
+	}
+	return strings.TrimRight(out.String(), "\n")
+}
+
+func formatStepResult(idx, total int, step toolCall, res toolResult, status string) string {
+	label := step.Tool
+	switch step.Tool {
+	case "shell":
+		var args struct {
+			Command string `json:"command"`
+			Cwd     string `json:"cwd,omitempty"`
+		}
+		if err := json.Unmarshal(step.Args, &args); err == nil && strings.TrimSpace(args.Command) != "" {
+			label = strings.TrimSpace(args.Command)
+		}
+	case "read_file", "write_file", "list_files", "search", "apply_patch":
+		var args map[string]any
+		if err := json.Unmarshal(step.Args, &args); err == nil {
+			if v, ok := args["path"].(string); ok && v != "" {
+				label = fmt.Sprintf("%s %s", step.Tool, v)
+			}
+		}
+	}
+	state := strings.ToUpper(status)
+	line := fmt.Sprintf("Step %d/%d — %s: %s", idx+1, total, state, label)
+	if res.Error != "" {
+		line += fmt.Sprintf("\n  error: %s", res.Error)
+	} else if res.ExitCode != 0 {
+		line += fmt.Sprintf("\n  exit_code: %d", res.ExitCode)
+	}
+	return line
 }
 
 func normalizeAgentResponse(resp string) string {
@@ -195,6 +585,45 @@ func decodeFirstJSON(text string, dst any) bool {
 		}
 	}
 	return false
+}
+
+func extractFirstJSON(text string) string {
+	start := strings.Index(text, "{")
+	if start == -1 {
+		return ""
+	}
+	depth := 0
+	inString := false
+	escape := false
+	for i := start; i < len(text); i++ {
+		ch := text[i]
+		if inString {
+			if escape {
+				escape = false
+				continue
+			}
+			if ch == '\\' {
+				escape = true
+				continue
+			}
+			if ch == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch ch {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return strings.TrimSpace(text[start : i+1])
+			}
+		}
+	}
+	return ""
 }
 
 func (h SessionHandler) executeTool(ctx context.Context, action protocol.Action, call toolCall) toolResult {
@@ -462,6 +891,14 @@ func formatToolBlock(res toolResult) string {
 	out.WriteString("\n")
 	out.WriteString(header)
 	out.WriteString("\n\n")
+	if res.Tool == "write_file" {
+		if preview := writePreview(res.Args); preview != "" {
+			out.WriteString(preview)
+			if !strings.HasSuffix(preview, "\n") {
+				out.WriteString("\n")
+			}
+		}
+	}
 	if res.Error != "" {
 		out.WriteString("  error: " + res.Error + "\n")
 	}
@@ -527,6 +964,40 @@ func toolHeader(res toolResult) string {
 	default:
 		return ""
 	}
+}
+
+func writePreview(rawArgs string) string {
+	var args struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal([]byte(rawArgs), &args); err != nil {
+		return ""
+	}
+	if strings.TrimSpace(args.Content) == "" {
+		return "  wrote 0 bytes"
+	}
+	bytes := len([]byte(args.Content))
+	lines := strings.Split(args.Content, "\n")
+	maxLines := 6
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+		lines = append(lines, "…")
+	}
+	var out strings.Builder
+	out.WriteString(fmt.Sprintf("  wrote %d bytes\n", bytes))
+	out.WriteString("  preview:\n")
+	for _, line := range lines {
+		if line == "" {
+			out.WriteString("    \n")
+			continue
+		}
+		if len(line) > 200 {
+			line = line[:200] + "…"
+		}
+		out.WriteString("    " + line + "\n")
+	}
+	return out.String()
 }
 
 func pickDelimiter(content string) string {

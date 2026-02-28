@@ -104,6 +104,8 @@ type Session struct {
 	contextMu       sync.Mutex
 	chatHistory     []chatTurn
 	toolSummaries   []string
+	planMu          sync.Mutex
+	plan            *planState
 }
 
 func New(opts Options) *Session {

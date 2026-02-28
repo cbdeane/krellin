@@ -29,6 +29,7 @@ type disconnectedMsg struct{}
 type connectedMsg struct{}
 
 type localCmdResultMsg struct {
+	cmd    string
 	output string
 	err    error
 }
@@ -82,6 +83,10 @@ type tuiModel struct {
 	mouseEnabled bool
 	autoScroll   bool
 	mouseTemp    bool
+
+	indentTerminal bool
+	lastCmdEcho    string
+	suppressEcho   bool
 }
 
 func newTUIModel(c client.Client, sessionID, agentID string) *tuiModel {
@@ -389,10 +394,10 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case localCmdResultMsg:
 		if msg.err != nil {
-			m.appendTerminal("[error] " + msg.err.Error())
+			m.appendCommandOutput("[error] " + msg.err.Error())
 			return m, nil
 		}
-		m.appendTerminal(msg.output)
+		m.appendCommandOutput(msg.output)
 		return m, nil
 	case disconnectedMsg:
 		m.ready = false
@@ -466,6 +471,9 @@ func (m *tuiModel) sendActionCmd(line string) tea.Cmd {
 				return nil
 			}
 		}
+		m.appendTerminalLine(" Running: " + line)
+		m.lastCmdEcho = line
+		m.suppressEcho = true
 		action := protocol.Action{
 			ActionID:  "local",
 			SessionID: m.sessionID,
@@ -505,7 +513,7 @@ func (m *tuiModel) runLocalCmd(line string) tea.Cmd {
 			return nil
 		}
 		out, err := m.localRunner(cmd)
-		return localCmdResultMsg{output: out, err: err}
+		return localCmdResultMsg{cmd: cmd, output: out, err: err}
 	}
 }
 
@@ -622,7 +630,7 @@ func (m *tuiModel) applyEvent(ev protocol.Event) {
 	case protocol.EventTerminalOutput:
 		var payload protocol.TerminalOutputPayload
 		if err := json.Unmarshal(ev.Payload, &payload); err == nil {
-			m.appendTerminal(payload.Data)
+			m.appendTerminal(m.filterTerminalOutput(payload.Data))
 		}
 	case protocol.EventError:
 		var payload protocol.ErrorPayload
@@ -637,6 +645,9 @@ func (m *tuiModel) applyEvent(ev protocol.Event) {
 		var payload protocol.ActionStartedPayload
 		if err := json.Unmarshal(ev.Payload, &payload); err == nil {
 			m.appendActionLog(fmt.Sprintf("%s started %s (%s)", formatEventTime(ev.Timestamp), payload.ActionID, payload.Type))
+			if payload.Type == string(protocol.ActionRunCommand) {
+				m.indentTerminal = true
+			}
 		}
 	case protocol.EventActionFinished:
 		var payload protocol.ActionFinishedPayload
@@ -646,6 +657,7 @@ func (m *tuiModel) applyEvent(ev protocol.Event) {
 				m.appendTerminal("[error] action failed: " + payload.Error)
 			}
 		}
+		m.indentTerminal = false
 		if m.pendingAgent {
 			m.thinking = false
 			m.pendingAgent = false
@@ -687,14 +699,20 @@ func (m *tuiModel) appendTerminal(data string) {
 	if strings.HasPrefix(trimmed, "[tool ") && len(m.terminal) > 0 && m.terminal[len(m.terminal)-1] != "" {
 		data = "\n" + data
 	}
+	if len(m.terminal) > 0 && m.terminal[len(m.terminal)-1] != "" && isChatLine(m.terminal[len(m.terminal)-1]) && !strings.HasPrefix(data, "\n") {
+		data = "\n" + data
+	}
+	if m.indentTerminal && len(m.terminal) > 0 && strings.HasPrefix(ansi.Strip(m.terminal[len(m.terminal)-1]), "◌ Running:") && !strings.HasPrefix(data, "\n") {
+		data = "\n" + data
+	}
 	parts := strings.Split(data, "\n")
 	if len(m.terminal) == 0 {
-		m.terminal = append(m.terminal, parts[0])
+		m.terminal = append(m.terminal, m.maybeIndent(parts[0]))
 	} else {
-		m.terminal[len(m.terminal)-1] += parts[0]
+		m.terminal[len(m.terminal)-1] += m.maybeIndent(parts[0])
 	}
 	for _, part := range parts[1:] {
-		m.terminal = append(m.terminal, part)
+		m.terminal = append(m.terminal, m.maybeIndent(part))
 	}
 	m.terminal = clampLines(m.terminal, 1000)
 	m.updateOutput()
@@ -717,6 +735,23 @@ func (m *tuiModel) appendChat(role, content string) {
 	m.appendTerminalLine(line)
 }
 
+func (m *tuiModel) appendCommandOutput(output string) {
+	if len(m.terminal) > 0 && m.terminal[len(m.terminal)-1] != "" {
+		m.terminal = append(m.terminal, "")
+	}
+	if strings.TrimSpace(output) != "" {
+		for _, line := range strings.Split(strings.TrimRight(output, "\n"), "\n") {
+			if line == "" {
+				m.terminal = append(m.terminal, "  ")
+				continue
+			}
+			m.terminal = append(m.terminal, "  "+line)
+		}
+	}
+	m.terminal = clampLines(m.terminal, 1000)
+	m.updateOutput()
+}
+
 func formatChat(role, content string) string {
 	if strings.TrimSpace(content) == "" {
 		return ""
@@ -732,8 +767,46 @@ func formatChat(role, content string) string {
 		roleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#B0B3B8"))
 	}
 	label := roleStyle.Render(tag)
-	content = strings.ReplaceAll(content, "\n", " ")
-	return label + " " + content
+	lines := strings.Split(content, "\n")
+	if len(lines) == 0 {
+		return ""
+	}
+	var out strings.Builder
+	out.WriteString(label + " " + lines[0])
+	for _, line := range lines[1:] {
+		out.WriteString("\n  " + line)
+	}
+	return out.String()
+}
+
+func isChatLine(line string) bool {
+	plain := ansi.Strip(line)
+	return strings.HasPrefix(plain, "◆ ") || strings.HasPrefix(plain, "› ") || strings.HasPrefix(plain, "• ")
+}
+
+func (m *tuiModel) filterTerminalOutput(data string) string {
+	if !m.suppressEcho {
+		return data
+	}
+	lines := strings.Split(data, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.TrimSpace(line) == strings.TrimSpace(m.lastCmdEcho) {
+			continue
+		}
+		out = append(out, line)
+	}
+	if len(out) > 0 {
+		m.suppressEcho = false
+	}
+	return strings.Join(out, "\n")
+}
+
+func (m *tuiModel) maybeIndent(line string) string {
+	if !m.indentTerminal || line == "" {
+		return line
+	}
+	return "  " + line
 }
 
 func sanitizeTerminal(data string) string {
@@ -898,20 +971,31 @@ func formatDiff(diff string) string {
 		return "[diff] no diff available"
 	}
 	lines := strings.Split(diff, "\n")
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#9AD1D4"))
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F4D06F"))
+	metaStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#7AA2B2"))
+	hunkStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#C792EA"))
+	addStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#7FD88B"))
+	delStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF7A7A"))
+	ctxStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#D0D6DA"))
 	var out strings.Builder
-	out.WriteString("◆ diff\n\n")
+	out.WriteString(titleStyle.Render("◆ diff") + "\n\n")
 	for _, line := range lines {
 		switch {
+		case strings.HasPrefix(line, "diff --git "):
+			out.WriteString("  " + headerStyle.Render(line) + "\n")
+		case strings.HasPrefix(line, "index "):
+			out.WriteString("  " + metaStyle.Render(line) + "\n")
 		case strings.HasPrefix(line, "+++ "), strings.HasPrefix(line, "--- "):
-			out.WriteString("  " + line + "\n")
+			out.WriteString("  " + headerStyle.Render(line) + "\n")
 		case strings.HasPrefix(line, "@@"):
-			out.WriteString("  " + line + "\n")
+			out.WriteString("  " + hunkStyle.Render(line) + "\n")
 		case strings.HasPrefix(line, "+"):
-			out.WriteString("  " + line + "\n")
+			out.WriteString("  " + addStyle.Render(line) + "\n")
 		case strings.HasPrefix(line, "-"):
-			out.WriteString("  " + line + "\n")
+			out.WriteString("  " + delStyle.Render(line) + "\n")
 		default:
-			out.WriteString("  " + line + "\n")
+			out.WriteString("  " + ctxStyle.Render(line) + "\n")
 		}
 	}
 	return out.String()
